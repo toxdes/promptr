@@ -79,16 +79,17 @@ AppWindow *app_window_new(GtkApplication *app)
                      G_CALLBACK(on_close_request), win);
 
     /* ── outer vertical box ─────────────────────────────────── */
-    outer_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4);
-    gtk_widget_set_margin_start(outer_box, 8);
-    gtk_widget_set_margin_end(outer_box, 8);
-    gtk_widget_set_margin_top(outer_box, 8);
-    gtk_widget_set_margin_bottom(outer_box, 8);
+    outer_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
+    gtk_widget_set_margin_start(outer_box, 12);
+    gtk_widget_set_margin_end(outer_box, 12);
+    gtk_widget_set_margin_top(outer_box, 12);
+    gtk_widget_set_margin_bottom(outer_box, 12);
     gtk_window_set_child(GTK_WINDOW(win->window), outer_box);
 
     /* ── row 1: prompt input ────────────────────────────────── */
     label = gtk_label_new("Prompt:");
     gtk_label_set_xalign(GTK_LABEL(label), 0.0f);
+    gtk_widget_set_margin_bottom(label, 4);
     gtk_box_append(GTK_BOX(outer_box), label);
 
     scroll = gtk_scrolled_window_new();
@@ -118,8 +119,8 @@ AppWindow *app_window_new(GtkApplication *app)
             "E.g. list all files in current dir, except .md files");
         gtk_widget_set_halign(plabel, GTK_ALIGN_START);
         gtk_widget_set_valign(plabel, GTK_ALIGN_START);
-        gtk_widget_set_margin_start(plabel, 10);
-        gtk_widget_set_margin_top(plabel, 6);
+        gtk_widget_set_margin_start(plabel, 12);
+        gtk_widget_set_margin_top(plabel, 8);
         gtk_widget_set_opacity(plabel, 0.5);
         gtk_widget_add_css_class(plabel, "dim-label");
         gtk_widget_set_can_target(plabel, FALSE);
@@ -139,8 +140,10 @@ AppWindow *app_window_new(GtkApplication *app)
 
     /* ── row 2: agent, model, submit ────────────────────────── */
     row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+    gtk_widget_set_margin_top(row, 4);
 
     label = gtk_label_new("Agent:");
+    gtk_widget_set_margin_end(label, 4);
     gtk_box_append(GTK_BOX(row), label);
 
     opt_count = 0;
@@ -158,6 +161,7 @@ AppWindow *app_window_new(GtkApplication *app)
     gtk_box_append(GTK_BOX(row), win->agent_dropdown);
 
     label = gtk_label_new("Model:");
+    gtk_widget_set_margin_end(label, 4);
     gtk_box_append(GTK_BOX(row), label);
 
     opt_count = 0;
@@ -175,6 +179,7 @@ AppWindow *app_window_new(GtkApplication *app)
     gtk_box_append(GTK_BOX(row), win->model_dropdown);
 
     win->submit_btn = gtk_button_new_with_label("Submit");
+    gtk_widget_set_margin_start(win->submit_btn, 8);
     gtk_widget_set_sensitive(win->submit_btn, FALSE);
     g_signal_connect_swapped(win->submit_btn, "clicked",
                              G_CALLBACK(on_submit), win);
@@ -184,6 +189,7 @@ AppWindow *app_window_new(GtkApplication *app)
 
     /* ── row 3: cmd label + cancel ──────────────────────────── */
     row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+    gtk_widget_set_margin_top(row, 4);
 
     win->cmd_label = gtk_label_new("CMD: opencode run <query>");
     gtk_label_set_xalign(GTK_LABEL(win->cmd_label), 0.0f);
@@ -193,6 +199,7 @@ AppWindow *app_window_new(GtkApplication *app)
     gtk_box_append(GTK_BOX(row), win->cmd_label);
 
     win->cancel_btn = gtk_button_new_with_label("Cancel");
+    gtk_widget_set_margin_start(win->cancel_btn, 8);
     gtk_widget_add_css_class(win->cancel_btn, "destructive-action");
     gtk_widget_set_visible(win->cancel_btn, FALSE);
     g_signal_connect_swapped(win->cancel_btn, "clicked",
@@ -204,6 +211,8 @@ AppWindow *app_window_new(GtkApplication *app)
     /* ── row 4: output ──────────────────────────────────────── */
     label = gtk_label_new("Output:");
     gtk_label_set_xalign(GTK_LABEL(label), 0.0f);
+    gtk_widget_set_margin_top(label, 8);
+    gtk_widget_set_margin_bottom(label, 4);
     gtk_box_append(GTK_BOX(outer_box), label);
 
     scroll = gtk_scrolled_window_new();
@@ -225,6 +234,7 @@ AppWindow *app_window_new(GtkApplication *app)
 
     /* ── row 5: copy, close, quit ───────────────────────────── */
     row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+    gtk_widget_set_margin_top(row, 4);
 
     win->copy_btn = gtk_button_new_with_label("Copy");
     gtk_widget_set_sensitive(win->copy_btn, FALSE);
@@ -701,6 +711,7 @@ static void load_css(void)
 
     provider = gtk_css_provider_new();
     gtk_css_provider_load_from_string(provider,
+        "textview { padding: 4px 8px; }"
         "textview.monospace, label.monospace { font-family: monospace; }");
     display = gdk_display_get_default();
     gtk_style_context_add_provider_for_display(display,
