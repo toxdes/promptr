@@ -30,8 +30,8 @@ static const char *MODEL_OPTIONS[] = {
     NULL
 };
 
-#define DEFAULT_WIDTH  700
-#define DEFAULT_HEIGHT 500
+#define DEFAULT_WIDTH  800
+#define DEFAULT_HEIGHT 600
 
 /* Set to 0 to disable Escape-key hide behaviour */
 #define ESCAPE_HIDES_WINDOW 1
@@ -41,7 +41,7 @@ static const char *MODEL_OPTIONS[] = {
  * prevents user-resizing.  Disable it if you need manual resizing
  * and configure floating in your compositor instead. */
 #ifndef LAYER_SHELL_ENABLED
-#define LAYER_SHELL_ENABLED 1
+#define LAYER_SHELL_ENABLED 0
 #endif
 
 #endif

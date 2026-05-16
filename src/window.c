@@ -190,10 +190,18 @@ AppWindow *app_window_new(GtkApplication *app)
                              G_CALLBACK(on_submit), win);
     gtk_box_append(GTK_BOX(row), win->submit_btn);
 
+    win->cancel_btn = gtk_button_new_with_label("Cancel");
+    gtk_widget_set_valign(win->cancel_btn, GTK_ALIGN_CENTER);
+    gtk_widget_set_margin_start(win->cancel_btn, 8);
+    gtk_widget_set_visible(win->cancel_btn, FALSE);
+    g_signal_connect_swapped(win->cancel_btn, "clicked",
+                             G_CALLBACK(on_cancel), win);
+    gtk_box_append(GTK_BOX(row), win->cancel_btn);
+
     gtk_box_append(GTK_BOX(outer_box), row);
 
-    /* ── row 3: cmd label + cancel ──────────────────────────── */
-    row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+    /* ── row 3: cmd label ────────────────────────────────────── */
+    row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
     gtk_widget_set_margin_top(row, 4);
 
     win->cmd_label = gtk_label_new("CMD: opencode run <query>");
@@ -202,14 +210,6 @@ AppWindow *app_window_new(GtkApplication *app)
     gtk_widget_set_hexpand(win->cmd_label, TRUE);
     gtk_widget_add_css_class(win->cmd_label, "monospace");
     gtk_box_append(GTK_BOX(row), win->cmd_label);
-
-    win->cancel_btn = gtk_button_new_with_label("Cancel");
-    gtk_widget_set_valign(win->cancel_btn, GTK_ALIGN_START);
-    gtk_widget_set_margin_start(win->cancel_btn, 8);
-    gtk_widget_set_visible(win->cancel_btn, FALSE);
-    g_signal_connect_swapped(win->cancel_btn, "clicked",
-                             G_CALLBACK(on_cancel), win);
-    gtk_box_append(GTK_BOX(row), win->cancel_btn);
 
     gtk_box_append(GTK_BOX(outer_box), row);
 
