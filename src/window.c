@@ -4,6 +4,7 @@
 #include "config.h"
 
 #include <gtk4-layer-shell/gtk4-layer-shell.h>
+#include <gtksourceview/gtksource.h>
 
 typedef enum {
     STATE_IDLE,
@@ -39,6 +40,10 @@ static void on_prompt_changed(GtkTextBuffer *buffer, AppWindow *win);
 static void on_dropdown_changed(GObject *self, GParamSpec *pspec, AppWindow *win);
 static void update_cmd_preview(AppWindow *win);
 static void app_window_restore_state(AppWindow *win);
+static void on_gutter_copy(GtkSourceGutterRenderer *renderer,
+                           GtkTextIter *iter,
+                           GdkRectangle *area,
+                           gpointer user_data);
 
 static void load_css(void);
 
@@ -226,14 +231,32 @@ AppWindow *app_window_new(GtkApplication *app)
                                    GTK_POLICY_AUTOMATIC);
     gtk_widget_set_vexpand(scroll, TRUE);
 
-    win->output_view = gtk_text_view_new();
+    win->output_view = GTK_WIDGET(gtk_source_view_new());
     gtk_text_view_set_editable(GTK_TEXT_VIEW(win->output_view), FALSE);
     gtk_text_view_set_cursor_visible(GTK_TEXT_VIEW(win->output_view), FALSE);
     gtk_text_view_set_wrap_mode(GTK_TEXT_VIEW(win->output_view),
                                 GTK_WRAP_WORD_CHAR);
     gtk_text_view_set_left_margin(GTK_TEXT_VIEW(win->output_view), 10);
     gtk_text_view_set_top_margin(GTK_TEXT_VIEW(win->output_view), 4);
+    gtk_source_view_set_show_line_numbers(
+        GTK_SOURCE_VIEW(win->output_view), TRUE);
     gtk_widget_add_css_class(win->output_view, "monospace");
+
+    {
+        GtkSourceGutter *gutter;
+        GtkSourceGutterRenderer *copy_icon;
+
+        gutter = gtk_source_view_get_gutter(
+            GTK_SOURCE_VIEW(win->output_view),
+            GTK_TEXT_WINDOW_LEFT);
+        copy_icon = gtk_source_gutter_renderer_pixbuf_new();
+        gtk_source_gutter_renderer_pixbuf_set_icon_name(
+            GTK_SOURCE_GUTTER_RENDERER_PIXBUF(copy_icon),
+            "edit-copy-symbolic");
+        g_signal_connect(copy_icon, "activate",
+                         G_CALLBACK(on_gutter_copy), win);
+        gtk_source_gutter_insert(gutter, copy_icon, -1);
+    }
     gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scroll),
                                   win->output_view);
     win->output_scroll = scroll;
@@ -664,6 +687,35 @@ static void update_cmd_preview(AppWindow *win)
     g_free(query);
     g_free(agent);
     g_free(model);
+}
+
+/* ── gutter copy ──────────────────────────────────────────────── */
+
+static void on_gutter_copy(GtkSourceGutterRenderer *renderer,
+                           GtkTextIter *iter,
+                           GdkRectangle *area,
+                           gpointer user_data)
+{
+    AppWindow *win = user_data;
+    GtkTextIter start, end;
+    GtkTextBuffer *buf;
+    char *text;
+    GdkClipboard *clipboard;
+
+    (void)renderer;
+    (void)area;
+
+    start = *iter;
+    end = *iter;
+    gtk_text_iter_forward_to_line_end(&end);
+
+    buf = gtk_text_iter_get_buffer(&start);
+    text = gtk_text_buffer_get_text(buf, &start, &end, FALSE);
+
+    clipboard = gdk_display_get_clipboard(
+        gtk_widget_get_display(win->window));
+    gdk_clipboard_set_text(clipboard, text);
+    g_free(text);
 }
 
 /* ── state persistence ────────────────────────────────────────── */

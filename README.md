@@ -14,13 +14,13 @@ make
 ### Debian / Ubuntu
 
 ```sh
-sudo apt install libgtk-4-dev libgtk4-layer-shell-dev
+sudo apt install libgtk-4-dev libgtk4-layer-shell-dev libgtksourceview-5-dev
 ```
 
 ### Arch Linux
 
 ```sh
-sudo pacman -S gtk4 gtk4-layer-shell
+sudo pacman -S gtk4 gtk4-layer-shell gtksourceview5
 ```
 
 ## Usage
@@ -38,8 +38,10 @@ on wlroots-based compositors like Sway, Hyprland, and River):
   selections, showing exactly what command will run.
 - Press **Enter** or click **Submit** to run `opencode run`.
 - **Shift+Enter** inserts a newline in the prompt.
-- The command output appears in the read-only **Output** textarea below.
-- Use **Copy** to copy the output to the clipboard.
+- The command output appears in the read-only **Output** textarea below
+  with line numbers in the gutter.
+- Use **Copy** to copy all output to the clipboard.  Click a line number
+  in the gutter to copy a single line.
 - Press **Escape** or click **Close** to hide the window (process stays
   resident).  Subsequent launches reuse the same instance.
 - Click **Close & Quit** to fully exit.  Your last selected model and
