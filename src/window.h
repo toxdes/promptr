@@ -18,6 +18,7 @@ typedef struct _AppWindow {
     GtkWidget      *copy_btn;
     GtkWidget      *close_btn;
     GtkWidget      *quit_btn;
+    GtkWidget      *marked_label;
 
     GSubprocess    *subprocess;
     GCancellable   *cancellable;

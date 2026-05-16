@@ -48,6 +48,7 @@ static void on_gutter_click(GtkGestureClick *gesture,
                             int n_press,
                             double x, double y,
                             AppWindow *win);
+static void update_marked_label(AppWindow *win);
 static void apply_default_marks(GtkTextBuffer *buf);
 static char *get_marked_text(AppWindow *win);
 
@@ -269,10 +270,22 @@ AppWindow *app_window_new(GtkApplication *app)
         GTK_SOURCE_VIEW(win->output_view), TRUE);
 
     {
+        GdkRGBA c = { 0.21, 0.77, 0.49, 0.55 };
+        GtkSourceMarkAttributes *attrs;
+
+        attrs = gtk_source_mark_attributes_new();
+        gtk_source_mark_attributes_set_background(attrs, &c);
+        gtk_source_view_set_mark_attributes(
+            GTK_SOURCE_VIEW(win->output_view),
+            "promptr-mark", attrs, 0);
+    }
+
+    {
         GtkGesture *gesture;
 
         gesture = gtk_gesture_click_new();
-        gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(gesture), GDK_BUTTON_PRIMARY);
+        gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(gesture),
+                                      GDK_BUTTON_PRIMARY);
         gtk_widget_add_controller(win->output_view,
                                   GTK_EVENT_CONTROLLER(gesture));
         g_signal_connect(gesture, "pressed",
@@ -284,7 +297,14 @@ AppWindow *app_window_new(GtkApplication *app)
     win->output_scroll = scroll;
     gtk_box_append(GTK_BOX(outer_box), scroll);
 
-    /* ── row 5: copy, close, quit ───────────────────────────── */
+    /* ── row 5: marked lines label ──────────────────────────── */
+    win->marked_label = gtk_label_new("Marked: none");
+    gtk_label_set_xalign(GTK_LABEL(win->marked_label), 0.0f);
+    gtk_widget_set_margin_top(win->marked_label, 4);
+    gtk_widget_set_margin_bottom(win->marked_label, 4);
+    gtk_box_append(GTK_BOX(outer_box), win->marked_label);
+
+    /* ── row 6: copy, close, quit ───────────────────────────── */
     row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
     gtk_widget_set_margin_top(row, 4);
 
@@ -398,6 +418,7 @@ static void set_finished_state(AppWindow *win, char *cmd, gint64 elapsed,
         buf = gtk_text_view_get_buffer(GTK_TEXT_VIEW(win->output_view));
         gtk_text_buffer_set_text(buf, output, -1);
         apply_default_marks(buf);
+        update_marked_label(win);
         gtk_widget_set_sensitive(win->copy_btn, TRUE);
     } else {
         GtkTextBuffer *buf;
@@ -789,6 +810,68 @@ static void on_gutter_click(GtkGestureClick *gesture,
     gtk_text_view_get_iter_at_location(
         GTK_TEXT_VIEW(win->output_view), &iter, buf_x, buf_y);
     toggle_mark_at_iter(buf, &iter);
+    update_marked_label(win);
+}
+
+static void update_marked_label(AppWindow *win)
+{
+    GtkTextBuffer *buf;
+    GtkTextIter iter;
+    GString *label;
+    int line, marked, total;
+
+    buf = gtk_text_view_get_buffer(GTK_TEXT_VIEW(win->output_view));
+    total = gtk_text_buffer_get_line_count(buf);
+    marked = 0;
+    line = 0;
+
+    gtk_text_buffer_get_start_iter(buf, &iter);
+    while (!gtk_text_iter_is_end(&iter)) {
+        GSList *marks;
+        marks = gtk_source_buffer_get_source_marks_at_line(
+            GTK_SOURCE_BUFFER(buf), line, "promptr-mark");
+        if (marks != NULL) {
+            marked++;
+            g_slist_free(marks);
+        }
+        gtk_text_iter_forward_line(&iter);
+        line++;
+    }
+
+    if (total <= 0) {
+        gtk_label_set_text(GTK_LABEL(win->marked_label), "Marked: none");
+        return;
+    }
+
+    if (marked == 0) {
+        gtk_label_set_text(GTK_LABEL(win->marked_label), "Marked: none");
+        return;
+    }
+
+    if (marked == total) {
+        gtk_label_set_text(GTK_LABEL(win->marked_label), "Marked: all");
+        return;
+    }
+
+    label = g_string_new("Marked: ");
+    line = 0;
+    gtk_text_buffer_get_start_iter(buf, &iter);
+    while (!gtk_text_iter_is_end(&iter)) {
+        GSList *marks;
+        marks = gtk_source_buffer_get_source_marks_at_line(
+            GTK_SOURCE_BUFFER(buf), line, "promptr-mark");
+        if (marks != NULL) {
+            if (label->len > 8)
+                g_string_append_c(label, ',');
+            g_string_append_printf(label, "%d", line + 1);
+            g_slist_free(marks);
+        }
+        gtk_text_iter_forward_line(&iter);
+        line++;
+    }
+
+    gtk_label_set_text(GTK_LABEL(win->marked_label), label->str);
+    g_string_free(label, TRUE);
 }
 
 static void apply_default_marks(GtkTextBuffer *buf)
