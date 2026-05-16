@@ -120,9 +120,10 @@ AppWindow *app_window_new(GtkApplication *app)
         gtk_widget_set_halign(plabel, GTK_ALIGN_START);
         gtk_widget_set_valign(plabel, GTK_ALIGN_START);
         gtk_widget_set_margin_start(plabel, 12);
-        gtk_widget_set_margin_top(plabel, 8);
+        gtk_widget_set_margin_top(plabel, 6);
         gtk_widget_set_opacity(plabel, 0.5);
         gtk_widget_add_css_class(plabel, "dim-label");
+        gtk_widget_add_css_class(plabel, "monospace");
         gtk_widget_set_can_target(plabel, FALSE);
         gtk_overlay_add_overlay(GTK_OVERLAY(overlay), plabel);
         win->placeholder_label = plabel;
@@ -711,7 +712,7 @@ static void load_css(void)
 
     provider = gtk_css_provider_new();
     gtk_css_provider_load_from_string(provider,
-        "textview { padding: 4px 8px; }"
+        "textview text { padding: 4px 10px; }"
         "textview.monospace, label.monospace { font-family: monospace; }");
     display = gdk_display_get_default();
     gtk_style_context_add_provider_for_display(display,
