@@ -15,6 +15,9 @@ SRCDIR   := src
 BUILDDIR := build
 TARGET   := promptr
 
+PREFIX ?= /usr/local
+BINDIR  = $(PREFIX)/bin
+
 SOURCES := $(wildcard $(SRCDIR)/*.c)
 OBJECTS := $(patsubst $(SRCDIR)/%.c,$(BUILDDIR)/%.o,$(SOURCES))
 DEPS    := $(OBJECTS:.o=.d)
@@ -33,4 +36,10 @@ $(BUILDDIR):
 clean:
 	rm -rf $(BUILDDIR) $(TARGET)
 
-.PHONY: clean
+install: $(TARGET)
+	install -D -m755 $(TARGET) $(DESTDIR)$(BINDIR)/$(TARGET)
+
+uninstall:
+	rm -f $(DESTDIR)$(BINDIR)/$(TARGET)
+
+.PHONY: clean install uninstall
