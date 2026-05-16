@@ -73,7 +73,7 @@ def main():
     for f in sorted(DIST.iterdir()):
         if f.is_file():
             size = f.stat().st_size
-            print("  %-45s  %,8d bytes" % (f.name, size))
+            print(f"  {f.name:<45s}  {size:>8,} bytes")
 
 
 if __name__ == "__main__":
