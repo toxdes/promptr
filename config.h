@@ -68,7 +68,7 @@ static const int DEFAULT_MARKED_LINES[] = { 0 };
 /* Set to 0 to disable desktop notification on copy */
 #define NOTIFY_ON_COPY 1
 
-/* Character rendered in gutter for marked lines */
-#define MARK_SYMBOL "\xe2\x97\x8f"
+/* Hex color for marked-line gutter indicator, e.g. "#33cc7f" */
+#define MARK_BG_COLOR "#33cc7f"
 
 #endif

@@ -50,6 +50,7 @@ static void on_dropdown_changed(GObject *self, GParamSpec *pspec, AppWindow *win
 static void update_cmd_preview(AppWindow *win);
 static void app_window_restore_state(AppWindow *win);
 static void set_cmd_text(AppWindow *win, const char *text);
+static gboolean hex_to_rgba(const char *hex, GdkRGBA *out);
 static void on_gutter_click(GtkGestureClick *gesture,
                             int n_press,
                             double x, double y,
@@ -280,7 +281,9 @@ AppWindow *app_window_new(GtkApplication *app)
         GTK_SOURCE_VIEW(win->output_view), TRUE);
 
     {
-        GdkRGBA c = { 0.30, 0.80, 0.50, 0.60 };
+        GdkRGBA c;
+
+        hex_to_rgba(MARK_BG_COLOR, &c);
         GtkSourceMarkAttributes *attrs;
 
         attrs = gtk_source_mark_attributes_new();
@@ -844,6 +847,29 @@ static void set_cmd_text(AppWindow *win, const char *text)
 
     buf = gtk_text_view_get_buffer(GTK_TEXT_VIEW(win->cmd_label));
     gtk_text_buffer_set_text(buf, text != NULL ? text : "", -1);
+}
+
+static gboolean hex_to_rgba(const char *hex, GdkRGBA *out)
+{
+    unsigned int r, g, b;
+    double a;
+
+    if (hex == NULL || hex[0] != '#') return FALSE;
+
+    if (sscanf(hex + 1, "%2x%2x%2x", &r, &g, &b) == 3) {
+        a = 0.60;
+    } else if (sscanf(hex + 1, "%2x%2x%2x%2x", &r, &g, &b,
+                      (unsigned int *)&a) == 4) {
+        a /= 255.0;
+    } else {
+        return FALSE;
+    }
+
+    out->red   = r / 255.0;
+    out->green = g / 255.0;
+    out->blue  = b / 255.0;
+    out->alpha = a;
+    return TRUE;
 }
 
 /* ── dropdown change ──────────────────────────────────────────── */
