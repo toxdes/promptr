@@ -1,0 +1,15 @@
+*.o
+*.d
+*.so
+*.a
+/build/
+/promptr
+
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+prompt.md
