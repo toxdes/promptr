@@ -45,6 +45,7 @@ static void on_prompt_changed(GtkTextBuffer *buffer, AppWindow *win);
 static void on_dropdown_changed(GObject *self, GParamSpec *pspec, AppWindow *win);
 static void update_cmd_preview(AppWindow *win);
 static void app_window_restore_state(AppWindow *win);
+static void set_cmd_text(AppWindow *win, const char *text);
 static void on_gutter_click(GtkGestureClick *gesture,
                             int n_press,
                             double x, double y,
@@ -234,9 +235,13 @@ AppWindow *app_window_new(GtkApplication *app)
     row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
     gtk_widget_set_margin_top(row, 4);
 
-    win->cmd_label = gtk_label_new("CMD: opencode run <query>");
-    gtk_label_set_xalign(GTK_LABEL(win->cmd_label), 0.0f);
-    gtk_label_set_wrap(GTK_LABEL(win->cmd_label), TRUE);
+    win->cmd_label = gtk_text_view_new();
+    gtk_text_view_set_editable(GTK_TEXT_VIEW(win->cmd_label), FALSE);
+    gtk_text_view_set_cursor_visible(GTK_TEXT_VIEW(win->cmd_label), FALSE);
+    gtk_text_view_set_wrap_mode(GTK_TEXT_VIEW(win->cmd_label),
+                                GTK_WRAP_WORD_CHAR);
+    gtk_text_view_set_top_margin(GTK_TEXT_VIEW(win->cmd_label), 2);
+    gtk_text_view_set_bottom_margin(GTK_TEXT_VIEW(win->cmd_label), 2);
     gtk_widget_set_hexpand(win->cmd_label, TRUE);
     gtk_widget_add_css_class(win->cmd_label, "monospace");
     gtk_box_append(GTK_BOX(row), win->cmd_label);
@@ -424,7 +429,7 @@ static void set_loading_state(AppWindow *win, const char *cmd)
     set_load_state_common(win, TRUE);
 
     label_text = g_strdup_printf("Running: %s", cmd);
-    gtk_label_set_text(GTK_LABEL(win->cmd_label), label_text);
+    set_cmd_text(win, label_text);
     g_free(label_text);
 
     update_submit_sensitivity(win);
@@ -442,7 +447,7 @@ static void set_finished_state(AppWindow *win, char *cmd, gint64 elapsed,
     ms = elapsed / 1000;
     label_text = g_strdup_printf("CMD: %s  Finished. Took %" G_GINT64_FORMAT "ms.",
                                  cmd, ms);
-    gtk_label_set_text(GTK_LABEL(win->cmd_label), label_text);
+    set_cmd_text(win, label_text);
     g_free(label_text);
     g_free(cmd);
 
@@ -474,7 +479,7 @@ static void set_canceled_state(AppWindow *win, char *cmd)
     win->state = STATE_CANCELED;
 
     label_text = g_strdup_printf("CMD: %s  Cancelled.", cmd);
-    gtk_label_set_text(GTK_LABEL(win->cmd_label), label_text);
+    set_cmd_text(win, label_text);
     g_free(label_text);
     g_free(cmd);
 
@@ -795,6 +800,14 @@ static void set_prompt_focused(AppWindow *win)
     gtk_widget_grab_focus(win->prompt_view);
 }
 
+static void set_cmd_text(AppWindow *win, const char *text)
+{
+    GtkTextBuffer *buf;
+
+    buf = gtk_text_view_get_buffer(GTK_TEXT_VIEW(win->cmd_label));
+    gtk_text_buffer_set_text(buf, text != NULL ? text : "", -1);
+}
+
 /* ── dropdown change ──────────────────────────────────────────── */
 
 static void on_dropdown_changed(GObject *self, GParamSpec *pspec,
@@ -843,7 +856,7 @@ static void update_cmd_preview(AppWindow *win)
     else
         g_string_append(display, " <query>");
 
-    gtk_label_set_text(GTK_LABEL(win->cmd_label), display->str);
+    set_cmd_text(win, display->str);
     g_string_free(display, TRUE);
     g_free(query);
     g_free(agent);
