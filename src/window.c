@@ -260,7 +260,7 @@ AppWindow *app_window_new(GtkApplication *app)
     gtk_text_view_set_cursor_visible(GTK_TEXT_VIEW(win->output_view), FALSE);
     gtk_text_view_set_wrap_mode(GTK_TEXT_VIEW(win->output_view),
                                 GTK_WRAP_WORD_CHAR);
-    gtk_text_view_set_left_margin(GTK_TEXT_VIEW(win->output_view), 10);
+    gtk_text_view_set_left_margin(GTK_TEXT_VIEW(win->output_view), 2);
     gtk_text_view_set_top_margin(GTK_TEXT_VIEW(win->output_view), 4);
     gtk_source_view_set_show_line_numbers(
         GTK_SOURCE_VIEW(win->output_view), TRUE);
@@ -522,6 +522,14 @@ static void on_cancel(AppWindow *win)
 
 /* ── copy ──────────────────────────────────────────────────────── */
 
+static gboolean flash_restore(gpointer user_data)
+{
+    AppWindow *win = user_data;
+
+    update_marked_label(win);
+    return G_SOURCE_REMOVE;
+}
+
 static void on_copy(AppWindow *win)
 {
     char *text;
@@ -532,6 +540,9 @@ static void on_copy(AppWindow *win)
         gtk_widget_get_display(win->window));
     gdk_clipboard_set_text(clipboard, text);
     g_free(text);
+
+    gtk_label_set_text(GTK_LABEL(win->marked_label), "Copied!");
+    g_timeout_add(1500, flash_restore, win);
 }
 
 /* ── close / quit ──────────────────────────────────────────────── */
@@ -601,6 +612,7 @@ static gboolean on_window_key_pressed(GtkEventControllerKey *controller,
     (void)controller;
     (void)keycode;
 
+    keyval = gdk_keyval_to_lower(keyval);
     mods = state & (GDK_SHIFT_MASK | GDK_CONTROL_MASK
                     | GDK_ALT_MASK | GDK_SUPER_MASK);
 
