@@ -204,8 +204,8 @@ AppWindow *app_window_new(GtkApplication *app)
     gtk_box_append(GTK_BOX(row), win->cmd_label);
 
     win->cancel_btn = gtk_button_new_with_label("Cancel");
+    gtk_widget_set_valign(win->cancel_btn, GTK_ALIGN_START);
     gtk_widget_set_margin_start(win->cancel_btn, 8);
-    gtk_widget_add_css_class(win->cancel_btn, "destructive-action");
     gtk_widget_set_visible(win->cancel_btn, FALSE);
     g_signal_connect_swapped(win->cancel_btn, "clicked",
                              G_CALLBACK(on_cancel), win);
@@ -255,6 +255,7 @@ AppWindow *app_window_new(GtkApplication *app)
     gtk_box_append(GTK_BOX(row), win->close_btn);
 
     win->quit_btn = gtk_button_new_with_label("Close & Quit");
+    gtk_widget_add_css_class(win->quit_btn, "destructive-action");
     g_signal_connect_swapped(win->quit_btn, "clicked",
                              G_CALLBACK(on_quit), win);
     gtk_box_append(GTK_BOX(row), win->quit_btn);
