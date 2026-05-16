@@ -35,6 +35,10 @@ static gboolean on_prompt_key_pressed(GtkEventControllerKey *controller,
                                       guint keyval, guint keycode,
                                       GdkModifierType state,
                                       AppWindow *win);
+static gboolean on_window_key_pressed(GtkEventControllerKey *controller,
+                                      guint keyval, guint keycode,
+                                      GdkModifierType state,
+                                      AppWindow *win);
 static gboolean on_close_request(GtkWindow *window, gpointer user_data);
 static void on_prompt_changed(GtkTextBuffer *buffer, AppWindow *win);
 static void on_dropdown_changed(GObject *self, GParamSpec *pspec, AppWindow *win);
@@ -68,6 +72,13 @@ AppWindow *app_window_new(GtkApplication *app)
     win->app = app;
     load_css();
 
+    gtk_accelerator_parse(KB_FOCUS_PROMPT, &win->kb_focus_keyval,
+                          &win->kb_focus_mods);
+    gtk_accelerator_parse(KB_COPY_MARKED, &win->kb_copy_keyval,
+                          &win->kb_copy_mods);
+    gtk_accelerator_parse(KB_QUIT, &win->kb_quit_keyval,
+                          &win->kb_quit_mods);
+
     win->window = gtk_window_new();
     gtk_window_set_application(GTK_WINDOW(win->window), app);
     gtk_window_set_title(GTK_WINDOW(win->window), "Promptr");
@@ -87,6 +98,15 @@ AppWindow *app_window_new(GtkApplication *app)
 
     g_signal_connect(win->window, "close-request",
                      G_CALLBACK(on_close_request), win);
+
+    {
+        GtkEventController *winctrl;
+
+        winctrl = gtk_event_controller_key_new();
+        gtk_widget_add_controller(win->window, winctrl);
+        g_signal_connect(winctrl, "key-pressed",
+                         G_CALLBACK(on_window_key_pressed), win);
+    }
 
     /* ── outer vertical box ─────────────────────────────────── */
     outer_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
@@ -547,6 +567,43 @@ static gboolean on_prompt_key_pressed(GtkEventControllerKey *controller,
             }
             return GDK_EVENT_STOP;
         }
+    }
+
+    return GDK_EVENT_PROPAGATE;
+}
+
+static gboolean on_window_key_pressed(GtkEventControllerKey *controller,
+                                      guint keyval, guint keycode,
+                                      GdkModifierType state,
+                                      AppWindow *win)
+{
+    GtkTextBuffer *buf;
+    GtkTextIter start, end;
+    GdkModifierType mods;
+
+    (void)controller;
+    (void)keycode;
+
+    mods = state & (GDK_SHIFT_MASK | GDK_CONTROL_MASK
+                    | GDK_ALT_MASK | GDK_SUPER_MASK);
+
+    if (keyval == win->kb_quit_keyval && mods == win->kb_quit_mods) {
+        on_quit(win);
+        return GDK_EVENT_STOP;
+    }
+
+    if (keyval == win->kb_focus_keyval && mods == win->kb_focus_mods) {
+        gtk_widget_grab_focus(win->prompt_view);
+        buf = gtk_text_view_get_buffer(GTK_TEXT_VIEW(win->prompt_view));
+        gtk_text_buffer_get_bounds(buf, &start, &end);
+        gtk_text_buffer_select_range(buf, &start, &end);
+        return GDK_EVENT_STOP;
+    }
+
+    if (keyval == win->kb_copy_keyval && mods == win->kb_copy_mods) {
+        if (gtk_widget_is_sensitive(win->copy_btn))
+            on_copy(win);
+        return GDK_EVENT_STOP;
     }
 
     return GDK_EVENT_PROPAGATE;

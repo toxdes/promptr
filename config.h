@@ -36,6 +36,14 @@ static const char *MODEL_OPTIONS[] = {
 /* Set to 0 to disable Escape-key hide behaviour */
 #define ESCAPE_HIDES_WINDOW 1
 
+/*
+ * Keyboard shortcuts (GTK accelerators, e.g. "<Control>k").
+ * Set to an empty string "" to disable a binding.
+ */
+#define KB_FOCUS_PROMPT  "<Control>k"
+#define KB_COPY_MARKED   "<Control><Shift>c"
+#define KB_QUIT          "<Control>q"
+
 /* Set to 0 to use a regular window instead of wlroots layer-shell.
  * Layer-shell makes the window float above tiling (like rofi) but
  * prevents user-resizing.  Disable it if you need manual resizing

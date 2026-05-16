@@ -25,6 +25,13 @@ typedef struct _AppWindow {
     gint64          start_time;
     gboolean        destroyed;
     int             state;
+
+    guint            kb_focus_keyval;
+    GdkModifierType  kb_focus_mods;
+    guint            kb_copy_keyval;
+    GdkModifierType  kb_copy_mods;
+    guint            kb_quit_keyval;
+    GdkModifierType  kb_quit_mods;
 } AppWindow;
 
 AppWindow *app_window_new(GtkApplication *app);
