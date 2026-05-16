@@ -124,7 +124,7 @@ AppWindow *app_window_new(GtkApplication *app)
     gtk_window_set_child(GTK_WINDOW(win->window), outer_box);
 
     /* ── row 1: prompt input ────────────────────────────────── */
-    label = gtk_label_new("Prompt:");
+    label = gtk_label_new("Prompt");
     gtk_label_set_xalign(GTK_LABEL(label), 0.0f);
     gtk_widget_set_margin_bottom(label, 4);
     gtk_box_append(GTK_BOX(outer_box), label);
@@ -182,7 +182,7 @@ AppWindow *app_window_new(GtkApplication *app)
     row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
     gtk_widget_set_margin_top(row, 4);
 
-    label = gtk_label_new("Agent:");
+    label = gtk_label_new("Agent");
     gtk_widget_set_margin_end(label, 4);
     gtk_box_append(GTK_BOX(row), label);
 
@@ -200,7 +200,7 @@ AppWindow *app_window_new(GtkApplication *app)
                      G_CALLBACK(on_dropdown_changed), win);
     gtk_box_append(GTK_BOX(row), win->agent_dropdown);
 
-    label = gtk_label_new("Model:");
+    label = gtk_label_new("Model");
     gtk_widget_set_margin_end(label, 4);
     gtk_box_append(GTK_BOX(row), label);
 
@@ -237,7 +237,7 @@ AppWindow *app_window_new(GtkApplication *app)
     gtk_box_append(GTK_BOX(outer_box), row);
 
     /* ── row 3: cmd label + preview ───────────────────────────── */
-    label = gtk_label_new("Cmd:");
+    label = gtk_label_new("Command");
     gtk_label_set_xalign(GTK_LABEL(label), 0.0f);
     gtk_widget_set_margin_top(label, 8);
     gtk_widget_set_margin_bottom(label, 4);
@@ -267,7 +267,7 @@ AppWindow *app_window_new(GtkApplication *app)
     gtk_box_append(GTK_BOX(outer_box), scroll);
 
     /* ── row 4: output ──────────────────────────────────────── */
-    label = gtk_label_new("Output:");
+    label = gtk_label_new("Output");
     gtk_label_set_xalign(GTK_LABEL(label), 0.0f);
     gtk_widget_set_margin_top(label, 8);
     gtk_widget_set_margin_bottom(label, 4);
@@ -452,6 +452,8 @@ static void set_loading_state(AppWindow *win, const char *cmd)
     set_cmd_text(win, label_text);
     g_free(label_text);
 
+    gtk_button_set_label(GTK_BUTTON(win->submit_btn), "Running...");
+
     update_submit_sensitivity(win);
 }
 
@@ -465,7 +467,7 @@ static void set_finished_state(AppWindow *win, char *cmd, gint64 elapsed,
     win->state = STATE_FINISHED;
 
     ms = elapsed / 1000;
-    label_text = g_strdup_printf("CMD: %s  Finished. Took %" G_GINT64_FORMAT "ms.",
+    label_text = g_strdup_printf("%s  Finished. Took %" G_GINT64_FORMAT "ms.",
                                  cmd, ms);
     set_cmd_text(win, label_text);
     g_free(label_text);
@@ -488,6 +490,7 @@ static void set_finished_state(AppWindow *win, char *cmd, gint64 elapsed,
         gtk_widget_set_sensitive(win->copy_btn, FALSE);
     }
 
+    gtk_button_set_label(GTK_BUTTON(win->submit_btn), "Submit");
     update_submit_sensitivity(win);
 }
 
@@ -498,11 +501,12 @@ static void set_canceled_state(AppWindow *win, char *cmd)
     set_load_state_common(win, FALSE);
     win->state = STATE_CANCELED;
 
-    label_text = g_strdup_printf("CMD: %s  Cancelled.", cmd);
+    label_text = g_strdup_printf("%s  Cancelled.", cmd);
     set_cmd_text(win, label_text);
     g_free(label_text);
     g_free(cmd);
 
+    gtk_button_set_label(GTK_BUTTON(win->submit_btn), "Submit");
     update_submit_sensitivity(win);
 }
 
@@ -515,7 +519,7 @@ static void set_errored_state(AppWindow *win, char *cmd,
     set_load_state_common(win, FALSE);
     win->state = STATE_FINISHED;
 
-    label_text = g_strdup_printf("CMD: %s  Errored.", cmd);
+    label_text = g_strdup_printf("%s  Errored.", cmd);
     set_cmd_text(win, label_text);
     g_free(label_text);
     g_free(cmd);
@@ -529,6 +533,7 @@ static void set_errored_state(AppWindow *win, char *cmd,
                              stderr_output != NULL && stderr_output[0] != '\0');
     update_marked_label(win);
 
+    gtk_button_set_label(GTK_BUTTON(win->submit_btn), "Submit");
     update_submit_sensitivity(win);
 }
 
@@ -919,7 +924,7 @@ static void update_cmd_preview(AppWindow *win)
     agent = get_selected_text(win->agent_dropdown);
     model = get_selected_text(win->model_dropdown);
 
-    display = g_string_new("CMD: opencode run --dir <tmp>");
+    display = g_string_new("opencode run --dir <tmp>");
     if (model != NULL
         && g_strcmp0(model, "None") != 0
         && model[0] != '\0')
