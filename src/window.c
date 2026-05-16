@@ -4,7 +4,11 @@
 #include "config.h"
 #include "configfile.h"
 
+#if __has_include(<gtk4-layer-shell/gtk4-layer-shell.h>)
 #include <gtk4-layer-shell/gtk4-layer-shell.h>
+#else
+#include <gtk-layer-shell/gtk-layer-shell.h>
+#endif
 #include <gtksourceview/gtksource.h>
 #include <unistd.h>
 
