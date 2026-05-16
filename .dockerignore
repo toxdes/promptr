@@ -1,0 +1,7 @@
+build/
+dist/
+promptr
+*.o
+*.d
+.vscode/
+.idea/
