@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48">
+  <rect x="4" y="4" width="40" height="40" rx="8" fill="#2d2d2d"/>
+  <rect x="4" y="4" width="40" height="40" rx="8" fill="none" stroke="#33cc7f" stroke-width="2"/>
+  <text x="24" y="30" font-family="monospace" font-size="22" font-weight="bold"
+        fill="#33cc7f" text-anchor="middle">&gt;_</text>
+</svg>

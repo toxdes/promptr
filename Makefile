@@ -18,6 +18,9 @@ TARGET   := promptr
 
 PREFIX ?= /usr/local
 BINDIR  = $(PREFIX)/bin
+DATADIR = $(PREFIX)/share
+ICONDIR = $(DATADIR)/icons/hicolor/scalable/apps
+APPDIR  = $(DATADIR)/applications
 
 SOURCES := $(wildcard $(SRCDIR)/*.c)
 OBJECTS := $(patsubst $(SRCDIR)/%.c,$(BUILDDIR)/%.o,$(SOURCES))
@@ -39,6 +42,8 @@ clean:
 
 install: $(TARGET)
 	install -D -m755 $(TARGET) $(DESTDIR)$(BINDIR)/$(TARGET)
+	install -D -m644 data/promptr.svg $(DESTDIR)$(ICONDIR)/promptr.svg
+	install -D -m644 promptr.desktop $(DESTDIR)$(APPDIR)/promptr.desktop
 
 uninstall:
 	rm -f $(DESTDIR)$(BINDIR)/$(TARGET)

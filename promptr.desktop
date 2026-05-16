@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Promptr
+Comment=GTK4 overlay prompt for opencode
+Exec=promptr
+Icon=promptr
+Terminal=false
+Categories=Utility;
+StartupNotify=true
