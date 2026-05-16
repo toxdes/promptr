@@ -5,6 +5,8 @@
 /build/
 /promptr
 
+dist/
+
 .vscode/
 .idea/
 *.swp
