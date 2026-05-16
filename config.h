@@ -40,6 +40,9 @@
 /* Desktop notification on copy (0 or 1) */
 #define NOTIFY_ON_COPY           1
 
+/* Window decorations when layer-shell is disabled (0 or 1) */
+#define DECORATED_DEFAULT        1
+
 /* Hex color for marked-line gutter indicator */
 #define MARK_BG_COLOR            "#33cc7f"
 

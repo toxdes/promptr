@@ -34,3 +34,6 @@ model_options=opencode-go/deepseek-v4-flash,opencode-go/deepseek-v4-pro,opencode
 
 # Default marked lines on output (1-based, comma-separated, 0=all)
 marked_lines=0
+
+# Window decorations when layer-shell is disabled (0 or 1)
+decorated=1

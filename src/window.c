@@ -101,7 +101,6 @@ AppWindow *app_window_new(GtkApplication *app) {
   win->window = gtk_window_new();
   gtk_window_set_application(GTK_WINDOW(win->window), app);
   gtk_window_set_title(GTK_WINDOW(win->window), "Promptr");
-  gtk_window_set_decorated(GTK_WINDOW(win->window), FALSE);
   gtk_window_set_default_size(
       GTK_WINDOW(win->window),
       runtime_config_get_int(win->config, "width", DEFAULT_WIDTH),
@@ -110,11 +109,16 @@ AppWindow *app_window_new(GtkApplication *app) {
 
   if (runtime_config_get_bool(win->config, "layer_shell",
                               LAYER_SHELL_ENABLED)) {
+    gtk_window_set_decorated(GTK_WINDOW(win->window), FALSE);
     gtk_layer_init_for_window(GTK_WINDOW(win->window));
     gtk_layer_set_layer(GTK_WINDOW(win->window), GTK_LAYER_SHELL_LAYER_OVERLAY);
     gtk_layer_set_namespace(GTK_WINDOW(win->window), "promptr");
     gtk_layer_set_keyboard_mode(GTK_WINDOW(win->window),
                                 GTK_LAYER_SHELL_KEYBOARD_MODE_EXCLUSIVE);
+  } else {
+    gtk_window_set_decorated(
+        GTK_WINDOW(win->window),
+        runtime_config_get_bool(win->config, "decorated", DECORATED_DEFAULT));
   }
 
   g_signal_connect(win->window, "close-request", G_CALLBACK(on_close_request),

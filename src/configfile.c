@@ -185,7 +185,89 @@ static const char *DEFAULT_CONFIG = "# promptr runtime configuration\n"
                                                                                                                                                                                               "marke"
                                                                                                                                                                                               "d_"
                                                                                                                                                                                               "lines"
-                                                                                                                                                                                              "=0\n";
+                                                                                                                                                                                              "=0\n"
+                                                                                                                                                                                              "\n"
+                                                                                                                                                                                              "# Window decorations when "
+                                                                                                                                                                                              "layer-shell is "
+                                                                                                                                                                                              "disabled "
+                                                                                                                                                                                              "(0 or 1)\n"
+                                                                                                                                                                                              "decorated=" G_STRINGIFY(
+                                                                                                                                                                                                  DECORATED_DEFAULT) "\n";
+
+typedef struct {
+  const char *key;
+  const char *value;
+  const char *comment;
+} ConfigDefault;
+
+static const ConfigDefault CONFIG_DEFAULTS[] = {
+    {"width", G_STRINGIFY(DEFAULT_WIDTH), "# Window size in pixels"},
+    {"height", G_STRINGIFY(DEFAULT_HEIGHT), NULL},
+    {"escape_hides", G_STRINGIFY(ESCAPE_HIDES_WINDOW),
+     "# Escape key hides the window (0 or 1)"},
+    {"layer_shell", G_STRINGIFY(LAYER_SHELL_ENABLED),
+     "# Layer-shell overlay on wlroots compositors (0 or 1)"},
+    {"notify_on_copy", G_STRINGIFY(NOTIFY_ON_COPY),
+     "# Desktop notification on copy (0 or 1)"},
+    {"mark_bg_color", MARK_BG_COLOR, "# Gutter mark color in hex"},
+    {"kb_focus_prompt", KB_FOCUS_PROMPT,
+     "# Keyboard shortcuts (GTK accelerator format)"},
+    {"kb_copy_marked", KB_COPY_MARKED, NULL},
+    {"kb_quit", KB_QUIT, NULL},
+    {"opencode_path", OPENCODE_PATH, "# Path to the opencode binary"},
+    {"agent_options", DEFAULT_AGENT_OPTIONS,
+     "# Agent dropdown options (comma-separated)"},
+    {"model_options", DEFAULT_MODEL_OPTIONS,
+     "# Model dropdown options (comma-separated)"},
+    {"marked_lines", DEFAULT_MARKED_LINES_STR,
+     "# Default marked lines on output (1-based, comma-separated, 0=all)"},
+    {"decorated", G_STRINGIFY(DECORATED_DEFAULT),
+     "# Window decorations when layer-shell is disabled (0 or 1)"},
+    {NULL, NULL, NULL}};
+
+static void migrate_config(const char *path, GKeyFile *kf) {
+  g_autofree char *contents = NULL;
+  gsize len;
+  GString *out;
+  gboolean changed = FALSE;
+  g_autoptr(GError) error = NULL;
+
+  for (int i = 0; CONFIG_DEFAULTS[i].key != NULL; i++) {
+    if (!g_key_file_has_key(kf, GROUP, CONFIG_DEFAULTS[i].key, NULL)) {
+      changed = TRUE;
+      break;
+    }
+  }
+
+  if (!changed)
+    return;
+
+  if (!g_file_get_contents(path, &contents, &len, &error)) {
+    g_warning("migrate_config: cannot read %s: %s", path, error->message);
+    return;
+  }
+
+  out = g_string_new(contents);
+
+  for (int i = 0; CONFIG_DEFAULTS[i].key != NULL; i++) {
+    if (!g_key_file_has_key(kf, GROUP, CONFIG_DEFAULTS[i].key, NULL)) {
+      if (CONFIG_DEFAULTS[i].comment != NULL) {
+        g_string_append_c(out, '\n');
+        g_string_append(out, CONFIG_DEFAULTS[i].comment);
+        g_string_append_c(out, '\n');
+      }
+      g_string_append(out, CONFIG_DEFAULTS[i].key);
+      g_string_append_c(out, '=');
+      g_string_append(out, CONFIG_DEFAULTS[i].value);
+      g_string_append_c(out, '\n');
+      g_key_file_set_value(kf, GROUP, CONFIG_DEFAULTS[i].key,
+                           CONFIG_DEFAULTS[i].value);
+    }
+  }
+
+  g_file_set_contents(path, out->str, -1, NULL);
+  g_string_free(out, TRUE);
+}
 
 static void write_default_config(const char *path) {
   const char *dir;
@@ -219,6 +301,8 @@ RuntimeConfig *runtime_config_load(void) {
       g_clear_error(&error);
     }
   }
+
+  migrate_config(path, c->kf);
 
   return c;
 }
