@@ -1,4 +1,4 @@
-FROM debian:bookworm
+FROM debian:bookworm AS builder
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential gcc make pkg-config \
@@ -13,4 +13,7 @@ COPY . /build
 WORKDIR /build
 
 RUN make
-RUN bash scripts/package.sh
+RUN mkdir -p /output && bash scripts/package.sh
+
+FROM scratch
+COPY --from=builder /output /
