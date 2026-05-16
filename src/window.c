@@ -68,12 +68,14 @@ AppWindow *app_window_new(GtkApplication *app)
                                 DEFAULT_WIDTH, DEFAULT_HEIGHT);
     gtk_window_set_resizable(GTK_WINDOW(win->window), TRUE);
 
+#if LAYER_SHELL_ENABLED
     gtk_layer_init_for_window(GTK_WINDOW(win->window));
     gtk_layer_set_layer(GTK_WINDOW(win->window),
                         GTK_LAYER_SHELL_LAYER_OVERLAY);
     gtk_layer_set_namespace(GTK_WINDOW(win->window), "promptr");
     gtk_layer_set_keyboard_mode(GTK_WINDOW(win->window),
                                 GTK_LAYER_SHELL_KEYBOARD_MODE_ON_DEMAND);
+#endif
 
     g_signal_connect(win->window, "close-request",
                      G_CALLBACK(on_close_request), win);
@@ -105,6 +107,8 @@ AppWindow *app_window_new(GtkApplication *app)
     win->prompt_view = gtk_text_view_new();
     gtk_text_view_set_wrap_mode(GTK_TEXT_VIEW(win->prompt_view),
                                 GTK_WRAP_WORD_CHAR);
+    gtk_text_view_set_left_margin(GTK_TEXT_VIEW(win->prompt_view), 10);
+    gtk_text_view_set_top_margin(GTK_TEXT_VIEW(win->prompt_view), 4);
     gtk_widget_add_css_class(win->prompt_view, "monospace");
     gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scroll),
                                   win->prompt_view);
@@ -227,6 +231,8 @@ AppWindow *app_window_new(GtkApplication *app)
     gtk_text_view_set_cursor_visible(GTK_TEXT_VIEW(win->output_view), FALSE);
     gtk_text_view_set_wrap_mode(GTK_TEXT_VIEW(win->output_view),
                                 GTK_WRAP_WORD_CHAR);
+    gtk_text_view_set_left_margin(GTK_TEXT_VIEW(win->output_view), 10);
+    gtk_text_view_set_top_margin(GTK_TEXT_VIEW(win->output_view), 4);
     gtk_widget_add_css_class(win->output_view, "monospace");
     gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scroll),
                                   win->output_view);
@@ -609,9 +615,17 @@ static void set_prompt_focused(AppWindow *win)
 static void on_dropdown_changed(GObject *self, GParamSpec *pspec,
                                 AppWindow *win)
 {
+    char *agent, *model;
+
     (void)self;
     (void)pspec;
     update_cmd_preview(win);
+
+    agent = get_selected_text(win->agent_dropdown);
+    model = get_selected_text(win->model_dropdown);
+    state_save(model, agent);
+    g_free(agent);
+    g_free(model);
 }
 
 /* ── cmd preview ──────────────────────────────────────────────── */
@@ -712,7 +726,6 @@ static void load_css(void)
 
     provider = gtk_css_provider_new();
     gtk_css_provider_load_from_string(provider,
-        "textview text { padding: 4px 10px; }"
         "textview.monospace, label.monospace { font-family: monospace; }");
     display = gdk_display_get_default();
     gtk_style_context_add_provider_for_display(display,
