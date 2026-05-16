@@ -17,7 +17,8 @@ static void child_setup(gpointer user_data)
 static void communicate_cb(GObject *source, GAsyncResult *result,
                            gpointer user_data);
 
-static char **build_argv(const char *model, const char *agent,
+static char **build_argv(const char *opencode_bin,
+                         const char *model, const char *agent,
                          const char *query, const char *workdir);
 
 void command_execute(AppWindow      *win,
@@ -25,6 +26,7 @@ void command_execute(AppWindow      *win,
                      const char     *agent,
                      const char     *query,
                      const char     *workdir,
+                     const char     *opencode_bin,
                      CommandCallback callback)
 {
     GSubprocessLauncher *launcher;
@@ -33,7 +35,7 @@ void command_execute(AppWindow      *win,
     char **argv;
     struct CallbackData *cbdata;
 
-    argv = build_argv(model, agent, query, workdir);
+    argv = build_argv(opencode_bin, model, agent, query, workdir);
 
     launcher = g_subprocess_launcher_new(
         G_SUBPROCESS_FLAGS_STDOUT_PIPE |
@@ -151,13 +153,14 @@ static void communicate_cb(GObject *source, GAsyncResult *result,
                  elapsed, exit_code, TRUE);
 }
 
-static char **build_argv(const char *model, const char *agent,
+static char **build_argv(const char *opencode_bin,
+                         const char *model, const char *agent,
                          const char *query, const char *workdir)
 {
     GPtrArray *args;
 
     args = g_ptr_array_new();
-    g_ptr_array_add(args, g_strdup("opencode"));
+    g_ptr_array_add(args, g_strdup(opencode_bin));
     g_ptr_array_add(args, g_strdup("run"));
 
     if (workdir != NULL && workdir[0] != '\0') {

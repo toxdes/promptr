@@ -82,6 +82,18 @@ AppWindow *app_window_new(GtkApplication *app)
     win->config = runtime_config_load();
     win->marked_lines_str = runtime_config_get_string(
         win->config, "marked_lines", DEFAULT_MARKED_LINES_STR);
+
+    {
+        g_autofree char *raw;
+
+        raw = runtime_config_get_string(win->config, "opencode_path",
+                                        OPENCODE_PATH);
+        if (g_str_has_prefix(raw, "~/"))
+            win->opencode_bin = g_build_filename(g_get_home_dir(),
+                                                 raw + 2, NULL);
+        else
+            win->opencode_bin = g_strdup(raw);
+    }
     load_css();
 
     kb = runtime_config_get_string(win->config, "kb_focus_prompt",
@@ -455,6 +467,7 @@ void app_window_free(gpointer data)
     g_clear_object(&win->cancellable);
     g_free(win->cmd_string);
     g_free(win->marked_lines_str);
+    g_free(win->opencode_bin);
     runtime_config_free(win->config);
     g_free(win);
 }
@@ -597,7 +610,8 @@ static void on_submit(AppWindow *win)
         }
     }
 
-    display = g_string_new("opencode run");
+    display = g_string_new(win->opencode_bin);
+    g_string_append(display, " run");
     if (tmpdir != NULL)
         g_string_append_printf(display, " --dir %s", tmpdir);
     if (model != NULL && g_strcmp0(model, "None") != 0 && model[0] != '\0')
@@ -615,6 +629,7 @@ static void on_submit(AppWindow *win)
     gtk_widget_set_sensitive(win->copy_btn, FALSE);
 
     command_execute(win, model, agent, query, tmpdir,
+                    win->opencode_bin,
                     command_finished_cb);
 
     if (win->subprocess != NULL && tmpdir != NULL)
@@ -953,7 +968,8 @@ static void update_cmd_preview(AppWindow *win)
     agent = get_selected_text(win->agent_dropdown);
     model = get_selected_text(win->model_dropdown);
 
-    display = g_string_new("opencode run --dir <tmp>");
+    display = g_string_new(win->opencode_bin);
+    g_string_append(display, " run --dir <tmp>");
     if (model != NULL
         && g_strcmp0(model, "None") != 0
         && model[0] != '\0')

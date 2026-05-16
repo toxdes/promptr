@@ -16,6 +16,7 @@ void command_execute(AppWindow      *win,
                      const char     *agent,
                      const char     *query,
                      const char     *workdir,
+                     const char     *opencode_bin,
                      CommandCallback callback);
 
 void command_cancel(AppWindow *win);

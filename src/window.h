@@ -32,6 +32,7 @@ typedef struct _AppWindow {
 
     RuntimeConfig  *config;
     char            *marked_lines_str;
+    char            *opencode_bin;
 
     guint            kb_focus_keyval;
     GdkModifierType  kb_focus_mods;
