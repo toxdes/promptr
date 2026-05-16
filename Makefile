@@ -3,8 +3,9 @@ PKG_CONF := pkg-config
 
 GTK_CFLAGS  := $(shell $(PKG_CONF) --cflags gtk4 | sed 's/-I/-isystem /g')
 GTK_LIBS    := $(shell $(PKG_CONF) --libs gtk4)
-LSH_CFLAGS  := $(shell $(PKG_CONF) --cflags gtk4-layer-shell-0 | sed 's/-I/-isystem /g')
-LSH_LIBS    := $(shell $(PKG_CONF) --libs gtk4-layer-shell-0)
+LSH_PKG := $(shell $(PKG_CONF) --exists gtk4-layer-shell-0 && echo gtk4-layer-shell-0 || echo gtk-layer-shell-0)
+LSH_CFLAGS  := $(shell $(PKG_CONF) --cflags $(LSH_PKG) | sed 's/-I/-isystem /g')
+LSH_LIBS    := $(shell $(PKG_CONF) --libs $(LSH_PKG))
 SV_CFLAGS   := $(shell $(PKG_CONF) --cflags gtksourceview-5 | sed 's/-I/-isystem /g')
 SV_LIBS     := $(shell $(PKG_CONF) --libs gtksourceview-5)
 
