@@ -727,7 +727,10 @@ static void load_css(void)
 
     provider = gtk_css_provider_new();
     gtk_css_provider_load_from_string(provider,
-        "textview.monospace, label.monospace { font-family: monospace; }");
+        "textview.monospace, label.monospace { font-family: monospace; }"
+        "dropdown button arrow {"
+        "  -gtk-icon-source: -gtk-icontheme(\"pan-down-symbolic\");"
+        "}");
     display = gdk_display_get_default();
     gtk_style_context_add_provider_for_display(display,
         GTK_STYLE_PROVIDER(provider),
