@@ -270,7 +270,7 @@ AppWindow *app_window_new(GtkApplication *app)
         GTK_SOURCE_VIEW(win->output_view), TRUE);
 
     {
-        GdkRGBA c = { 0.21, 0.77, 0.49, 0.55 };
+        GdkRGBA c = { 0.21, 0.77, 0.49, 0.35 };
         GtkSourceMarkAttributes *attrs;
 
         attrs = gtk_source_mark_attributes_new();
@@ -284,6 +284,8 @@ AppWindow *app_window_new(GtkApplication *app)
         GtkGesture *gesture;
 
         gesture = gtk_gesture_click_new();
+        gtk_event_controller_set_propagation_phase(
+            GTK_EVENT_CONTROLLER(gesture), GTK_PHASE_CAPTURE);
         gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(gesture),
                                       GDK_BUTTON_PRIMARY);
         gtk_widget_add_controller(win->output_view,
