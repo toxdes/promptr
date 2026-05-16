@@ -28,9 +28,13 @@ static void set_loading_state(AppWindow *win, const char *cmd);
 static void set_finished_state(AppWindow *win, char *cmd, gint64 elapsed,
                                const char *output);
 static void set_canceled_state(AppWindow *win, char *cmd);
+static void set_errored_state(AppWindow *win, char *cmd,
+                              const char *stderr_output);
 
 static void command_finished_cb(AppWindow *win, const char *output,
-                                gint64 elapsed, gboolean exited_cleanly);
+                                const char *stderr_output,
+                                gint64 elapsed, int exit_code,
+                                gboolean exited_cleanly);
 
 static gboolean on_prompt_key_pressed(GtkEventControllerKey *controller,
                                       guint keyval, guint keycode,
@@ -486,6 +490,32 @@ static void set_canceled_state(AppWindow *win, char *cmd)
     update_submit_sensitivity(win);
 }
 
+static void set_errored_state(AppWindow *win, char *cmd,
+                              const char *stderr_output)
+{
+    char *label_text;
+    GtkTextBuffer *buf;
+
+    set_load_state_common(win, FALSE);
+    win->state = STATE_FINISHED;
+
+    label_text = g_strdup_printf("CMD: %s  Errored.", cmd);
+    set_cmd_text(win, label_text);
+    g_free(label_text);
+    g_free(cmd);
+
+    buf = gtk_text_view_get_buffer(GTK_TEXT_VIEW(win->output_view));
+    if (stderr_output != NULL)
+        gtk_text_buffer_set_text(buf, stderr_output, -1);
+    else
+        gtk_text_buffer_set_text(buf, "", -1);
+    gtk_widget_set_sensitive(win->copy_btn,
+                             stderr_output != NULL && stderr_output[0] != '\0');
+    update_marked_label(win);
+
+    update_submit_sensitivity(win);
+}
+
 /* ── submit ────────────────────────────────────────────────────── */
 
 static void on_submit(AppWindow *win)
@@ -549,7 +579,9 @@ static void on_submit(AppWindow *win)
 }
 
 static void command_finished_cb(AppWindow *win, const char *output,
-                                gint64 elapsed, gboolean exited_cleanly)
+                                const char *stderr_output,
+                                gint64 elapsed, int exit_code,
+                                gboolean exited_cleanly)
 {
     char *cmd;
 
@@ -561,11 +593,17 @@ static void command_finished_cb(AppWindow *win, const char *output,
         return;
     }
 
-    if (exited_cleanly) {
-        set_finished_state(win, cmd, elapsed, output);
-    } else {
+    if (!exited_cleanly) {
         set_canceled_state(win, cmd);
+        return;
     }
+
+    if (exit_code != 0) {
+        set_errored_state(win, cmd, stderr_output);
+        return;
+    }
+
+    set_finished_state(win, cmd, elapsed, output);
 }
 
 /* ── cancel ────────────────────────────────────────────────────── */

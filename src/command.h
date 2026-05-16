@@ -6,7 +6,9 @@
 
 typedef void (*CommandCallback)(AppWindow *win,
                                 const char *output,
+                                const char *stderr_output,
                                 gint64      elapsed_us,
+                                int         exit_code,
                                 gboolean    exited_cleanly);
 
 void command_execute(AppWindow      *win,

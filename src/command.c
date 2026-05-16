@@ -37,7 +37,7 @@ void command_execute(AppWindow      *win,
 
     launcher = g_subprocess_launcher_new(
         G_SUBPROCESS_FLAGS_STDOUT_PIPE |
-        G_SUBPROCESS_FLAGS_STDERR_SILENCE);
+        G_SUBPROCESS_FLAGS_STDERR_PIPE);
     g_subprocess_launcher_set_child_setup(launcher, child_setup, NULL, NULL);
 
     proc = g_subprocess_launcher_spawnv(
@@ -51,7 +51,7 @@ void command_execute(AppWindow      *win,
 
         errmsg = g_strdup_printf("Failed to spawn: %s", error->message);
         if (callback != NULL)
-            callback(win, errmsg, 0, TRUE);
+            callback(win, NULL, errmsg, 0, -1, TRUE);
         g_free(errmsg);
         g_error_free(error);
         return;
@@ -95,16 +95,20 @@ static void communicate_cb(GObject *source, GAsyncResult *result,
     CommandCallback callback = cbdata->callback;
     g_autoptr(GError) error = NULL;
     g_autofree char *stdout_str = NULL;
+    g_autofree char *stderr_str = NULL;
     gint64 elapsed;
     gboolean success;
     gboolean destroyed;
+    int exit_code;
 
     g_free(cbdata);
 
     elapsed = g_get_monotonic_time() - win->start_time;
 
     success = g_subprocess_communicate_utf8_finish(
-        proc, result, &stdout_str, NULL, &error);
+        proc, result, &stdout_str, &stderr_str, &error);
+
+    exit_code = g_subprocess_get_exit_status(proc);
 
     destroyed = win->destroyed;
 
@@ -113,17 +117,19 @@ static void communicate_cb(GObject *source, GAsyncResult *result,
 
     if (destroyed) {
         if (callback != NULL)
-            callback(win, NULL, elapsed, FALSE);
+            callback(win, NULL, NULL, elapsed, exit_code, FALSE);
         return;
     }
 
     if (!success) {
         if (g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
             if (callback != NULL)
-                callback(win, stdout_str, elapsed, FALSE);
+                callback(win, stdout_str, stderr_str,
+                         elapsed, exit_code, FALSE);
         } else if (g_subprocess_get_if_signaled(proc)) {
             if (callback != NULL)
-                callback(win, stdout_str, elapsed, FALSE);
+                callback(win, stdout_str, stderr_str,
+                         elapsed, exit_code, FALSE);
         } else {
             const char *msg;
             char *full;
@@ -131,7 +137,8 @@ static void communicate_cb(GObject *source, GAsyncResult *result,
             msg = error != NULL ? error->message : "Unknown error";
             full = g_strdup_printf("Process error: %s", msg);
             if (callback != NULL)
-                callback(win, full, elapsed, TRUE);
+                callback(win, full, stderr_str,
+                         elapsed, exit_code, TRUE);
             g_free(full);
         }
         return;
@@ -140,7 +147,8 @@ static void communicate_cb(GObject *source, GAsyncResult *result,
     if (callback != NULL)
         callback(win,
                  stdout_str != NULL ? stdout_str : "",
-                 elapsed, TRUE);
+                 stderr_str != NULL ? stderr_str : "",
+                 elapsed, exit_code, TRUE);
 }
 
 static char **build_argv(const char *model, const char *agent,
