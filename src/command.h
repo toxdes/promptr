@@ -13,6 +13,7 @@ void command_execute(AppWindow      *win,
                      const char     *model,
                      const char     *agent,
                      const char     *query,
+                     const char     *workdir,
                      CommandCallback callback);
 
 void command_cancel(AppWindow *win);

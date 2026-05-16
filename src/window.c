@@ -5,6 +5,7 @@
 
 #include <gtk4-layer-shell/gtk4-layer-shell.h>
 #include <gtksourceview/gtksource.h>
+#include <unistd.h>
 
 typedef enum {
     STATE_IDLE,
@@ -270,11 +271,13 @@ AppWindow *app_window_new(GtkApplication *app)
         GTK_SOURCE_VIEW(win->output_view), TRUE);
 
     {
-        GdkRGBA c = { 0.21, 0.77, 0.49, 0.35 };
+        GdkRGBA c = { 0.30, 0.80, 0.50, 0.60 };
         GtkSourceMarkAttributes *attrs;
 
         attrs = gtk_source_mark_attributes_new();
         gtk_source_mark_attributes_set_background(attrs, &c);
+        gtk_source_mark_attributes_set_icon_name(attrs,
+            "media-record-symbolic");
         gtk_source_view_set_mark_attributes(
             GTK_SOURCE_VIEW(win->output_view),
             "promptr-mark", attrs, 0);
@@ -347,9 +350,36 @@ void app_window_present(AppWindow *win)
     set_prompt_focused(win);
 }
 
+static void remove_temp_dirs(AppWindow *win)
+{
+    GSList *l;
+    GDir *dir;
+    const char *name;
+    g_autofree char *path = NULL;
+
+    if (win->temp_dirs == NULL) return;
+
+    for (l = win->temp_dirs; l != NULL; l = l->next) {
+        dir = g_dir_open((const char *)l->data, 0, NULL);
+        if (dir != NULL) {
+            while ((name = g_dir_read_name(dir)) != NULL) {
+                path = g_build_filename((const char *)l->data,
+                                        name, NULL);
+                unlink(path);
+            }
+            g_dir_close(dir);
+        }
+        rmdir((const char *)l->data);
+        g_free(l->data);
+    }
+    g_slist_free(win->temp_dirs);
+    win->temp_dirs = NULL;
+}
+
 void app_window_close_and_quit(AppWindow *win)
 {
     if (win == NULL) return;
+    remove_temp_dirs(win);
     if (win->subprocess != NULL) {
         command_cancel(win);
     }
@@ -365,6 +395,7 @@ void app_window_free(gpointer data)
     AppWindow *win = data;
 
     if (win == NULL) return;
+    remove_temp_dirs(win);
     if (win->subprocess != NULL) {
         command_cancel(win);
     }
@@ -419,7 +450,10 @@ static void set_finished_state(AppWindow *win, char *cmd, gint64 elapsed,
         GtkTextBuffer *buf;
         buf = gtk_text_view_get_buffer(GTK_TEXT_VIEW(win->output_view));
         gtk_text_buffer_set_text(buf, output, -1);
-        apply_default_marks(buf);
+        if (!win->defaults_applied) {
+            apply_default_marks(buf);
+            win->defaults_applied = TRUE;
+        }
         update_marked_label(win);
         gtk_widget_set_sensitive(win->copy_btn, TRUE);
     } else {
@@ -455,6 +489,8 @@ static void on_submit(AppWindow *win)
     GString *display;
     char *cmd_display;
     GtkTextBuffer *outbuf;
+    g_autofree char *tmpdir = NULL;
+    GError *err = NULL;
 
     if (win->subprocess != NULL) return;
 
@@ -467,7 +503,19 @@ static void on_submit(AppWindow *win)
     agent = get_selected_text(win->agent_dropdown);
     model = get_selected_text(win->model_dropdown);
 
+    {
+        g_autofree char *tmpl;
+        tmpl = g_build_filename(g_get_tmp_dir(), "promptr-XXXXXX", NULL);
+        tmpdir = g_dir_make_tmp(tmpl, &err);
+        if (tmpdir == NULL) {
+            g_warning("Failed to create temp dir: %s", err->message);
+            g_clear_error(&err);
+        }
+    }
+
     display = g_string_new("opencode run");
+    if (tmpdir != NULL)
+        g_string_append_printf(display, " --dir %s", tmpdir);
     if (model != NULL && g_strcmp0(model, "None") != 0 && model[0] != '\0')
         g_string_append_printf(display, " --model %s", model);
     if (agent != NULL && g_strcmp0(agent, "None") != 0 && agent[0] != '\0')
@@ -482,7 +530,12 @@ static void on_submit(AppWindow *win)
     gtk_text_buffer_set_text(outbuf, "", -1);
     gtk_widget_set_sensitive(win->copy_btn, FALSE);
 
-    command_execute(win, model, agent, query, command_finished_cb);
+    command_execute(win, model, agent, query, tmpdir,
+                    command_finished_cb);
+
+    if (win->subprocess != NULL && tmpdir != NULL)
+        win->temp_dirs = g_slist_prepend(win->temp_dirs,
+                                         g_strdup(tmpdir));
 
     if (win->subprocess != NULL)
         set_loading_state(win, cmd_display);
@@ -539,7 +592,26 @@ static void on_copy(AppWindow *win)
     clipboard = gdk_display_get_clipboard(
         gtk_widget_get_display(win->window));
     gdk_clipboard_set_text(clipboard, text);
-    g_free(text);
+
+#if NOTIFY_ON_COPY
+    {
+        GNotification *n;
+        n = g_notification_new("Promptr: copied to clipboard");
+        if (text != NULL && text[0] != '\0') {
+            g_autofree char *preview = NULL;
+            gsize len;
+            len = strlen(text);
+            if (len > 50) {
+                preview = g_strndup(text, 50);
+                g_notification_set_body(n, preview);
+            } else {
+                g_notification_set_body(n, text);
+            }
+        }
+        g_application_send_notification(G_APPLICATION(win->app), "copy", n);
+        g_object_unref(n);
+    }
+#endif
 
     gtk_label_set_text(GTK_LABEL(win->marked_label), "Copied!");
     g_timeout_add(1500, flash_restore, win);

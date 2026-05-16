@@ -18,12 +18,13 @@ static void communicate_cb(GObject *source, GAsyncResult *result,
                            gpointer user_data);
 
 static char **build_argv(const char *model, const char *agent,
-                         const char *query);
+                         const char *query, const char *workdir);
 
 void command_execute(AppWindow      *win,
                      const char     *model,
                      const char     *agent,
                      const char     *query,
+                     const char     *workdir,
                      CommandCallback callback)
 {
     GSubprocessLauncher *launcher;
@@ -32,7 +33,7 @@ void command_execute(AppWindow      *win,
     char **argv;
     struct CallbackData *cbdata;
 
-    argv = build_argv(model, agent, query);
+    argv = build_argv(model, agent, query, workdir);
 
     launcher = g_subprocess_launcher_new(
         G_SUBPROCESS_FLAGS_STDOUT_PIPE |
@@ -143,13 +144,18 @@ static void communicate_cb(GObject *source, GAsyncResult *result,
 }
 
 static char **build_argv(const char *model, const char *agent,
-                         const char *query)
+                         const char *query, const char *workdir)
 {
     GPtrArray *args;
 
     args = g_ptr_array_new();
     g_ptr_array_add(args, g_strdup("opencode"));
     g_ptr_array_add(args, g_strdup("run"));
+
+    if (workdir != NULL && workdir[0] != '\0') {
+        g_ptr_array_add(args, g_strdup("--dir"));
+        g_ptr_array_add(args, g_strdup(workdir));
+    }
 
     if (model != NULL
         && g_strcmp0(model, "None") != 0

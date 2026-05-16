@@ -26,6 +26,8 @@ typedef struct _AppWindow {
     gint64          start_time;
     gboolean        destroyed;
     int             state;
+    gboolean        defaults_applied;
+    GSList         *temp_dirs;
 
     guint            kb_focus_keyval;
     GdkModifierType  kb_focus_mods;
