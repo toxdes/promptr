@@ -44,13 +44,12 @@ static void on_prompt_changed(GtkTextBuffer *buffer, AppWindow *win);
 static void on_dropdown_changed(GObject *self, GParamSpec *pspec, AppWindow *win);
 static void update_cmd_preview(AppWindow *win);
 static void app_window_restore_state(AppWindow *win);
-static void on_gutter_mark(GtkSourceGutterRenderer *renderer,
-                           GtkTextIter *iter,
-                           GdkRectangle *area,
-                           gpointer user_data);
+static void on_gutter_click(GtkGestureClick *gesture,
+                            int n_press,
+                            double x, double y,
+                            AppWindow *win);
 static void apply_default_marks(GtkTextBuffer *buf);
 static char *get_marked_text(AppWindow *win);
-static GdkPixbuf *create_mark_pixbuf(void);
 
 static void load_css(void);
 
@@ -266,25 +265,20 @@ AppWindow *app_window_new(GtkApplication *app)
         GTK_SOURCE_VIEW(win->output_view), TRUE);
     gtk_widget_add_css_class(win->output_view, "monospace");
 
+    gtk_source_view_set_show_line_marks(
+        GTK_SOURCE_VIEW(win->output_view), TRUE);
+
     {
-        GtkSourceGutter *gutter;
-        GtkSourceGutterRenderer *marker;
-        GdkPixbuf *dot;
+        GtkGesture *gesture;
 
-        gutter = gtk_source_view_get_gutter(
-            GTK_SOURCE_VIEW(win->output_view),
-            GTK_TEXT_WINDOW_LEFT);
-
-        dot = create_mark_pixbuf();
-        marker = gtk_source_gutter_renderer_pixbuf_new();
-        gtk_source_gutter_renderer_pixbuf_set_pixbuf(
-            GTK_SOURCE_GUTTER_RENDERER_PIXBUF(marker), dot);
-        g_object_unref(dot);
-        gtk_source_gutter_renderer_set_xalign(marker, 0.5f);
-        g_signal_connect(marker, "activate",
-                         G_CALLBACK(on_gutter_mark), win);
-        gtk_source_gutter_insert(gutter, marker, -1);
+        gesture = gtk_gesture_click_new();
+        gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(gesture), GDK_BUTTON_PRIMARY);
+        gtk_widget_add_controller(win->output_view,
+                                  GTK_EVENT_CONTROLLER(gesture));
+        g_signal_connect(gesture, "pressed",
+                         G_CALLBACK(on_gutter_click), win);
     }
+
     gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scroll),
                                   win->output_view);
     win->output_scroll = scroll;
@@ -753,44 +747,48 @@ static void update_cmd_preview(AppWindow *win)
 
 /* ── gutter marks ──────────────────────────────────────────────── */
 
-static GdkPixbuf *create_mark_pixbuf(void)
+static void toggle_mark_at_iter(GtkTextBuffer *buf, GtkTextIter *iter)
 {
-    GdkPixbuf *p;
-
-    p = gdk_pixbuf_new(GDK_COLORSPACE_RGB, TRUE, 8, 10, 10);
-    gdk_pixbuf_fill(p, 0x3584e4ff);
-    return p;
-}
-
-static void on_gutter_mark(GtkSourceGutterRenderer *renderer,
-                           GtkTextIter *iter,
-                           GdkRectangle *area,
-                           gpointer user_data)
-{
-    GtkTextBuffer *buf;
     int line;
     GSList *marks;
 
-    (void)renderer;
-    (void)area;
-    (void)user_data;
-
-    buf = gtk_text_iter_get_buffer(iter);
     line = gtk_text_iter_get_line(iter);
-
     marks = gtk_source_buffer_get_source_marks_at_line(
         GTK_SOURCE_BUFFER(buf), line, "promptr-mark");
 
     if (marks != NULL) {
         for (GSList *m = marks; m != NULL; m = m->next)
             gtk_text_buffer_delete_mark(buf, GTK_TEXT_MARK(m->data));
+        g_slist_free(marks);
     } else {
         gtk_source_buffer_create_source_mark(
             GTK_SOURCE_BUFFER(buf), NULL, "promptr-mark", iter);
     }
+}
 
-    if (marks != NULL)
-        g_slist_free(marks);
+static void on_gutter_click(GtkGestureClick *gesture,
+                            int n_press,
+                            double x, double y,
+                            AppWindow *win)
+{
+    GtkTextBuffer *buf;
+    GtkTextIter iter;
+    int buf_x, buf_y;
+
+    (void)gesture;
+    (void)n_press;
+
+    gtk_text_view_window_to_buffer_coords(
+        GTK_TEXT_VIEW(win->output_view),
+        GTK_TEXT_WINDOW_WIDGET,
+        (int)x, (int)y, &buf_x, &buf_y);
+
+    if (buf_x >= 0) return;
+
+    buf = gtk_text_view_get_buffer(GTK_TEXT_VIEW(win->output_view));
+    gtk_text_view_get_iter_at_location(
+        GTK_TEXT_VIEW(win->output_view), &iter, buf_x, buf_y);
+    toggle_mark_at_iter(buf, &iter);
 }
 
 static void apply_default_marks(GtkTextBuffer *buf)
