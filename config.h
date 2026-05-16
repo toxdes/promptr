@@ -48,7 +48,7 @@ static const char *MODEL_OPTIONS[] = {
  * Layer-shell makes the window float above tiling (like rofi) but
  * prevents user-resizing.  Disable it if you need manual resizing
  * and configure floating in your compositor instead. */
-#define LAYER_SHELL_ENABLED 0
+#define LAYER_SHELL_ENABLED 1
 
 /*
  * Lines to pre-mark in the output gutter (1-based line numbers).

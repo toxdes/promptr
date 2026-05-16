@@ -93,7 +93,7 @@ AppWindow *app_window_new(GtkApplication *app)
                         GTK_LAYER_SHELL_LAYER_OVERLAY);
     gtk_layer_set_namespace(GTK_WINDOW(win->window), "promptr");
     gtk_layer_set_keyboard_mode(GTK_WINDOW(win->window),
-                                GTK_LAYER_SHELL_KEYBOARD_MODE_ON_DEMAND);
+                                GTK_LAYER_SHELL_KEYBOARD_MODE_EXCLUSIVE);
 #endif
 
     g_signal_connect(win->window, "close-request",
