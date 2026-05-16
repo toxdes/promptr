@@ -190,6 +190,7 @@ AppWindow *app_window_new(GtkApplication *app)
 
     win->submit_btn = gtk_button_new_with_label("Submit");
     gtk_widget_set_margin_start(win->submit_btn, 8);
+    gtk_widget_add_css_class(win->submit_btn, "suggested-action");
     gtk_widget_set_sensitive(win->submit_btn, FALSE);
     g_signal_connect_swapped(win->submit_btn, "clicked",
                              G_CALLBACK(on_submit), win);
@@ -244,18 +245,18 @@ AppWindow *app_window_new(GtkApplication *app)
 
     {
         GtkSourceGutter *gutter;
-        GtkSourceGutterRenderer *copy_icon;
+        GtkSourceGutterRenderer *copy_btn;
 
         gutter = gtk_source_view_get_gutter(
             GTK_SOURCE_VIEW(win->output_view),
             GTK_TEXT_WINDOW_LEFT);
-        copy_icon = gtk_source_gutter_renderer_pixbuf_new();
-        gtk_source_gutter_renderer_pixbuf_set_icon_name(
-            GTK_SOURCE_GUTTER_RENDERER_PIXBUF(copy_icon),
-            "edit-copy-symbolic");
-        g_signal_connect(copy_icon, "activate",
+        copy_btn = gtk_source_gutter_renderer_text_new();
+        gtk_source_gutter_renderer_text_set_text(
+            GTK_SOURCE_GUTTER_RENDERER_TEXT(copy_btn), " \xe2\x86\xaa ", -1);
+        gtk_source_gutter_renderer_set_xalign(copy_btn, 0.5f);
+        g_signal_connect(copy_btn, "activate",
                          G_CALLBACK(on_gutter_copy), win);
-        gtk_source_gutter_insert(gutter, copy_icon, -1);
+        gtk_source_gutter_insert(gutter, copy_btn, -1);
     }
     gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scroll),
                                   win->output_view);
@@ -436,9 +437,10 @@ static void on_submit(AppWindow *win)
     gtk_text_buffer_set_text(outbuf, "", -1);
     gtk_widget_set_sensitive(win->copy_btn, FALSE);
 
-    set_loading_state(win, cmd_display);
-
     command_execute(win, model, agent, query, command_finished_cb);
+
+    if (win->subprocess != NULL)
+        set_loading_state(win, cmd_display);
 
     g_free(query);
     g_free(agent);
