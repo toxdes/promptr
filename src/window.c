@@ -2,6 +2,7 @@
 #include "command.h"
 #include "state.h"
 #include "config.h"
+#include "configfile.h"
 
 #include <gtk4-layer-shell/gtk4-layer-shell.h>
 #include <gtksourceview/gtksource.h>
@@ -56,7 +57,7 @@ static void on_gutter_click(GtkGestureClick *gesture,
                             double x, double y,
                             AppWindow *win);
 static void update_marked_label(AppWindow *win);
-static void apply_default_marks(GtkTextBuffer *buf);
+static void apply_default_marks(AppWindow *win, GtkTextBuffer *buf);
 static char *get_marked_text(AppWindow *win);
 
 static void load_css(void);
@@ -70,20 +71,30 @@ AppWindow *app_window_new(GtkApplication *app)
     GtkEventController *key_ctrl;
     GtkStringList *list;
     GtkTextBuffer *buffer;
-    const char **opts;
-    int opt_count, i;
+    int i;
     gboolean has_options;
+    g_autofree char *kb;
+    g_autofree char **opts = NULL;
 
     win = g_new0(AppWindow, 1);
 
     win->app = app;
+    win->config = runtime_config_load();
+    win->marked_lines_str = runtime_config_get_string(
+        win->config, "marked_lines", DEFAULT_MARKED_LINES_STR);
     load_css();
 
-    gtk_accelerator_parse(KB_FOCUS_PROMPT, &win->kb_focus_keyval,
+    kb = runtime_config_get_string(win->config, "kb_focus_prompt",
+                                   KB_FOCUS_PROMPT);
+    gtk_accelerator_parse(kb, &win->kb_focus_keyval,
                           &win->kb_focus_mods);
-    gtk_accelerator_parse(KB_COPY_MARKED, &win->kb_copy_keyval,
+    kb = runtime_config_get_string(win->config, "kb_copy_marked",
+                                   KB_COPY_MARKED);
+    gtk_accelerator_parse(kb, &win->kb_copy_keyval,
                           &win->kb_copy_mods);
-    gtk_accelerator_parse(KB_QUIT, &win->kb_quit_keyval,
+    kb = runtime_config_get_string(win->config, "kb_quit",
+                                   KB_QUIT);
+    gtk_accelerator_parse(kb, &win->kb_quit_keyval,
                           &win->kb_quit_mods);
 
     win->window = gtk_window_new();
@@ -91,17 +102,19 @@ AppWindow *app_window_new(GtkApplication *app)
     gtk_window_set_title(GTK_WINDOW(win->window), "Promptr");
     gtk_window_set_decorated(GTK_WINDOW(win->window), FALSE);
     gtk_window_set_default_size(GTK_WINDOW(win->window),
-                                DEFAULT_WIDTH, DEFAULT_HEIGHT);
+        runtime_config_get_int(win->config, "width", DEFAULT_WIDTH),
+        runtime_config_get_int(win->config, "height", DEFAULT_HEIGHT));
     gtk_window_set_resizable(GTK_WINDOW(win->window), TRUE);
 
-#if LAYER_SHELL_ENABLED
-    gtk_layer_init_for_window(GTK_WINDOW(win->window));
-    gtk_layer_set_layer(GTK_WINDOW(win->window),
-                        GTK_LAYER_SHELL_LAYER_OVERLAY);
-    gtk_layer_set_namespace(GTK_WINDOW(win->window), "promptr");
-    gtk_layer_set_keyboard_mode(GTK_WINDOW(win->window),
-                                GTK_LAYER_SHELL_KEYBOARD_MODE_EXCLUSIVE);
-#endif
+    if (runtime_config_get_bool(win->config, "layer_shell",
+                                LAYER_SHELL_ENABLED)) {
+        gtk_layer_init_for_window(GTK_WINDOW(win->window));
+        gtk_layer_set_layer(GTK_WINDOW(win->window),
+                            GTK_LAYER_SHELL_LAYER_OVERLAY);
+        gtk_layer_set_namespace(GTK_WINDOW(win->window), "promptr");
+        gtk_layer_set_keyboard_mode(GTK_WINDOW(win->window),
+                                    GTK_LAYER_SHELL_KEYBOARD_MODE_EXCLUSIVE);
+    }
 
     g_signal_connect(win->window, "close-request",
                      G_CALLBACK(on_close_request), win);
@@ -186,12 +199,16 @@ AppWindow *app_window_new(GtkApplication *app)
     gtk_widget_set_margin_end(label, 4);
     gtk_box_append(GTK_BOX(row), label);
 
-    opt_count = 0;
-    for (opts = AGENT_OPTIONS; *opts != NULL; opts++) opt_count++;
-    has_options = (opt_count > 1);
+    opts = runtime_config_get_string_list(win->config, "agent_options");
+    if (opts == NULL)
+        opts = g_strsplit(DEFAULT_AGENT_OPTIONS, ",", -1);
+    has_options = FALSE;
     list = gtk_string_list_new(NULL);
-    for (i = 0; AGENT_OPTIONS[i] != NULL; i++)
-        gtk_string_list_append(list, AGENT_OPTIONS[i]);
+    for (i = 0; opts[i] != NULL && opts[i][0] != '\0'; i++) {
+        gtk_string_list_append(list, opts[i]);
+        has_options = TRUE;
+    }
+    has_options = (i > 1);
     win->agent_dropdown =
         gtk_drop_down_new(G_LIST_MODEL(list), NULL);
     gtk_drop_down_set_selected(GTK_DROP_DOWN(win->agent_dropdown), 0);
@@ -199,17 +216,23 @@ AppWindow *app_window_new(GtkApplication *app)
     g_signal_connect(win->agent_dropdown, "notify::selected",
                      G_CALLBACK(on_dropdown_changed), win);
     gtk_box_append(GTK_BOX(row), win->agent_dropdown);
+    g_strfreev(opts);
+    opts = NULL;
 
     label = gtk_label_new("Model");
     gtk_widget_set_margin_end(label, 4);
     gtk_box_append(GTK_BOX(row), label);
 
-    opt_count = 0;
-    for (opts = MODEL_OPTIONS; *opts != NULL; opts++) opt_count++;
-    has_options = (opt_count > 1);
+    opts = runtime_config_get_string_list(win->config, "model_options");
+    if (opts == NULL)
+        opts = g_strsplit(DEFAULT_MODEL_OPTIONS, ",", -1);
+    has_options = FALSE;
     list = gtk_string_list_new(NULL);
-    for (i = 0; MODEL_OPTIONS[i] != NULL; i++)
-        gtk_string_list_append(list, MODEL_OPTIONS[i]);
+    for (i = 0; opts[i] != NULL && opts[i][0] != '\0'; i++) {
+        gtk_string_list_append(list, opts[i]);
+        has_options = TRUE;
+    }
+    has_options = (i > 1);
     win->model_dropdown =
         gtk_drop_down_new(G_LIST_MODEL(list), NULL);
     gtk_drop_down_set_selected(GTK_DROP_DOWN(win->model_dropdown), 0);
@@ -217,6 +240,8 @@ AppWindow *app_window_new(GtkApplication *app)
     g_signal_connect(win->model_dropdown, "notify::selected",
                      G_CALLBACK(on_dropdown_changed), win);
     gtk_box_append(GTK_BOX(row), win->model_dropdown);
+    g_strfreev(opts);
+    opts = NULL;
 
     win->submit_btn = gtk_button_new_with_label("Submit");
     gtk_widget_set_margin_start(win->submit_btn, 8);
@@ -295,8 +320,11 @@ AppWindow *app_window_new(GtkApplication *app)
 
     {
         GdkRGBA c;
+        g_autofree char *color;
 
-        hex_to_rgba(MARK_BG_COLOR, &c);
+        color = runtime_config_get_string(win->config, "mark_bg_color",
+                                          MARK_BG_COLOR);
+        hex_to_rgba(color, &c);
         GtkSourceMarkAttributes *attrs;
 
         attrs = gtk_source_mark_attributes_new();
@@ -426,6 +454,8 @@ void app_window_free(gpointer data)
     }
     g_clear_object(&win->cancellable);
     g_free(win->cmd_string);
+    g_free(win->marked_lines_str);
+    runtime_config_free(win->config);
     g_free(win);
 }
 
@@ -478,7 +508,7 @@ static void set_finished_state(AppWindow *win, char *cmd, gint64 elapsed,
         buf = gtk_text_view_get_buffer(GTK_TEXT_VIEW(win->output_view));
         gtk_text_buffer_set_text(buf, output, -1);
         if (!win->defaults_applied) {
-            apply_default_marks(buf);
+            apply_default_marks(win, buf);
             win->defaults_applied = TRUE;
         }
         update_marked_label(win);
@@ -655,8 +685,8 @@ static void on_copy(AppWindow *win)
         gtk_widget_get_display(win->window));
     gdk_clipboard_set_text(clipboard, text);
 
-#if NOTIFY_ON_COPY
-    {
+    if (runtime_config_get_bool(win->config, "notify_on_copy",
+                                NOTIFY_ON_COPY)) {
         GNotification *n;
         n = g_notification_new("Promptr: copied to clipboard");
         if (text != NULL && text[0] != '\0') {
@@ -673,7 +703,6 @@ static void on_copy(AppWindow *win)
         g_application_send_notification(G_APPLICATION(win->app), "copy", n);
         g_object_unref(n);
     }
-#endif
 
     gtk_label_set_text(GTK_LABEL(win->marked_label), "Copied!");
     g_timeout_add(1500, flash_restore, win);
@@ -715,9 +744,9 @@ static gboolean on_prompt_key_pressed(GtkEventControllerKey *controller,
     (void)keycode;
 
     if (keyval == GDK_KEY_Escape) {
-#if ESCAPE_HIDES_WINDOW
-        gtk_widget_set_visible(win->window, FALSE);
-#endif
+        if (runtime_config_get_bool(win->config, "escape_hides",
+                                    ESCAPE_HIDES_WINDOW))
+            gtk_widget_set_visible(win->window, FALSE);
         return GDK_EVENT_STOP;
     }
 
@@ -1053,15 +1082,16 @@ static void update_marked_label(AppWindow *win)
     g_string_free(label, TRUE);
 }
 
-static void apply_default_marks(GtkTextBuffer *buf)
+static void apply_default_marks(AppWindow *win, GtkTextBuffer *buf)
 {
     GtkTextIter iter;
     int i, total, line;
     gboolean mark_all;
+    g_autofree char **parts = NULL;
 
-    if (DEFAULT_MARKED_LINES[0] == -1) return;
+    if (g_strcmp0(win->marked_lines_str, "-1") == 0) return;
 
-    mark_all = (DEFAULT_MARKED_LINES[0] == 0);
+    mark_all = (g_strcmp0(win->marked_lines_str, "0") == 0);
 
     if (mark_all) {
         gtk_text_buffer_get_start_iter(buf, &iter);
@@ -1073,9 +1103,10 @@ static void apply_default_marks(GtkTextBuffer *buf)
         return;
     }
 
+    parts = g_strsplit(win->marked_lines_str, ",", -1);
     total = gtk_text_buffer_get_line_count(buf);
-    for (i = 0; DEFAULT_MARKED_LINES[i] != -1; i++) {
-        line = DEFAULT_MARKED_LINES[i] - 1;
+    for (i = 0; parts[i] != NULL; i++) {
+        line = (int)g_ascii_strtoll(parts[i], NULL, 10) - 1;
         if (line >= 0 && line < total) {
             gtk_text_buffer_get_iter_at_line(buf, &iter, line);
             gtk_source_buffer_create_source_mark(

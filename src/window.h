@@ -2,6 +2,7 @@
 #define WINDOW_H
 
 #include <gtk/gtk.h>
+#include "configfile.h"
 
 typedef struct _AppWindow {
     GtkApplication *app;
@@ -28,6 +29,9 @@ typedef struct _AppWindow {
     int             state;
     gboolean        defaults_applied;
     GSList         *temp_dirs;
+
+    RuntimeConfig  *config;
+    char            *marked_lines_str;
 
     guint            kb_focus_keyval;
     GdkModifierType  kb_focus_mods;

@@ -2,33 +2,10 @@
 #define CONFIG_H
 
 /*
- * Hardcoded options for Agent and Model pickers.
- * The first entry "None" is always selected by default and
- * means the corresponding CLI flag (--agent / --model) is
- * omitted from the generated command.
- *
- * Add actual agent/model names after "None".  Example:
- *   {"None", "Planner", "Executor", NULL};
- *
- * If no additional entries are provided (array has only "None"
- * followed by NULL), the picker will show "None" and be
- * disabled.
+ * Compile-time fallback defaults for promptr.
+ * All values here can be overridden at runtime via
+ * ~/.config/promptr/config (created on first launch).
  */
-
-static const char *AGENT_OPTIONS[] = {
-    "None",
-    "linux_cmd",
-    NULL
-};
-
-static const char *MODEL_OPTIONS[] = {
-    "None",
-    "opencode-go/deepseek-v4-flash",
-    "opencode-go/deepseek-v4-pro",
-    "opencode/big-pickle",
-    "opencode/deepseek-v4-flash-free",
-    NULL
-};
 
 #define DEFAULT_WIDTH  900
 #define DEFAULT_HEIGHT 700
@@ -37,38 +14,29 @@ static const char *MODEL_OPTIONS[] = {
 #define ESCAPE_HIDES_WINDOW 1
 
 /*
- * Keyboard shortcuts (GTK accelerators, e.g. "<Control>k").
- * Set to an empty string "" to disable a binding.
+ * Keyboard shortcuts (GTK accelerator string format, e.g. "<Control>k").
  */
 #define KB_FOCUS_PROMPT  "<Control>k"
 #define KB_COPY_MARKED   "<Control><Shift>c"
 #define KB_QUIT          "<Control>q"
 
-/* Set to 0 to use a regular window instead of wlroots layer-shell.
- * Layer-shell makes the window float above tiling (like rofi) but
- * prevents user-resizing.  Disable it if you need manual resizing
- * and configure floating in your compositor instead. */
+/* Layer-shell overlay on wlroots compositors (0 or 1) */
 #define LAYER_SHELL_ENABLED 1
 
-/*
- * Lines to pre-mark in the output gutter (1-based line numbers).
- * Marks appear as blue dots in the gutter.  The Copy button copies
- * only marked lines.
- *
- *   { 0 }      — mark all lines
- *   { -1 }     — mark no lines (manual click-to-toggle only)
- *   { 1, 5, 10, -1 }  — mark lines 1, 5, and 10
- *   { 1, 2, 3, 4, 5, 6, -1 }  — mark lines 1 through 6
- *
- * The array MUST be terminated with -1.
- * You can click any line number in the gutter to toggle its mark.
- */
-static const int DEFAULT_MARKED_LINES[] = { 1, -1 };
+/* Comma-separated options for Agent/Model pickers (first=default) */
+#define DEFAULT_AGENT_OPTIONS  "linux_cmd,None"
+#define DEFAULT_MODEL_OPTIONS  "opencode-go/deepseek-v4-flash," \
+                               "opencode-go/deepseek-v4-pro," \
+                               "opencode/big-pickle," \
+                               "opencode/deepseek-v4-flash-free,None"
 
-/* Set to 0 to disable desktop notification on copy */
+/* Default marked lines (0=all, -1=none, or comma-separated 1-based) */
+#define DEFAULT_MARKED_LINES_STR  "1"
+
+/* Desktop notification on copy (0 or 1) */
 #define NOTIFY_ON_COPY 1
 
-/* Hex color for marked-line gutter indicator, e.g. "#33cc7f" */
+/* Hex color for marked-line gutter indicator */
 #define MARK_BG_COLOR "#33cc7f"
 
 #endif
