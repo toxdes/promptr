@@ -9,7 +9,9 @@ LSH_LIBS    := $(shell $(PKG_CONF) --libs $(LSH_PKG))
 SV_CFLAGS   := $(shell $(PKG_CONF) --cflags gtksourceview-5 | sed 's/-I/-isystem /g')
 SV_LIBS     := $(shell $(PKG_CONF) --libs gtksourceview-5)
 
-CFLAGS  := -std=c11 -pedantic -Wall -Wextra -Werror -O2 -I. $(GTK_CFLAGS) $(LSH_CFLAGS) $(SV_CFLAGS)
+VERSION := $(shell cat VERSION)
+
+CFLAGS  := -std=c11 -pedantic -Wall -Wextra -Werror -O2 -I. $(GTK_CFLAGS) $(LSH_CFLAGS) $(SV_CFLAGS) -DVERSION=\"$(VERSION)\"
 LDFLAGS := $(GTK_LIBS) $(LSH_LIBS) $(SV_LIBS)
 
 SRCDIR   := src

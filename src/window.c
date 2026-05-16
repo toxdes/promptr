@@ -342,7 +342,8 @@ AppWindow *app_window_new(GtkApplication *app) {
   gtk_box_append(GTK_BOX(outer_box), scroll);
 
   /* ── row 5: marked lines label ──────────────────────────── */
-  win->marked_label = gtk_label_new("Marked: none");
+  win->marked_label = gtk_label_new("Marked lines: none");
+  gtk_widget_set_margin_start(win->marked_label, 48);
   gtk_label_set_xalign(GTK_LABEL(win->marked_label), 0.0f);
   gtk_widget_set_margin_top(win->marked_label, 4);
   gtk_widget_set_margin_bottom(win->marked_label, 4);
@@ -352,7 +353,7 @@ AppWindow *app_window_new(GtkApplication *app) {
   row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
   gtk_widget_set_margin_top(row, 4);
 
-  win->copy_btn = gtk_button_new_with_label("Copy");
+  win->copy_btn = gtk_button_new_with_label("Copy Marked Lines");
   gtk_widget_set_sensitive(win->copy_btn, FALSE);
   g_signal_connect_swapped(win->copy_btn, "clicked", G_CALLBACK(on_copy), win);
   gtk_box_append(GTK_BOX(row), win->copy_btn);
@@ -366,6 +367,13 @@ AppWindow *app_window_new(GtkApplication *app) {
   gtk_widget_add_css_class(win->quit_btn, "destructive-action");
   g_signal_connect_swapped(win->quit_btn, "clicked", G_CALLBACK(on_quit), win);
   gtk_box_append(GTK_BOX(row), win->quit_btn);
+
+  win->version_label = gtk_label_new("v" VERSION);
+  gtk_widget_set_opacity(win->version_label, 0.5);
+  gtk_widget_set_hexpand(win->version_label, TRUE);
+  gtk_widget_set_halign(win->version_label, GTK_ALIGN_END);
+  gtk_widget_set_valign(win->version_label, GTK_ALIGN_CENTER);
+  gtk_box_append(GTK_BOX(row), win->version_label);
 
   gtk_box_append(GTK_BOX(outer_box), row);
 
@@ -477,7 +485,7 @@ static void set_finished_state(AppWindow *win, char *cmd, gint64 elapsed,
 
   ms = elapsed / 1000;
   label_text =
-      g_strdup_printf("%s  Finished. Took %" G_GINT64_FORMAT "ms.", cmd, ms);
+      g_strdup_printf("%s\n\nFinished. Took %" G_GINT64_FORMAT "ms.", cmd, ms);
   set_cmd_text(win, label_text);
   g_free(label_text);
   g_free(cmd);
@@ -995,21 +1003,21 @@ static void update_marked_label(AppWindow *win) {
   }
 
   if (total <= 0) {
-    gtk_label_set_text(GTK_LABEL(win->marked_label), "Marked: none");
+    gtk_label_set_text(GTK_LABEL(win->marked_label), "Marked lines: none");
     return;
   }
 
   if (marked == 0) {
-    gtk_label_set_text(GTK_LABEL(win->marked_label), "Marked: none");
+    gtk_label_set_text(GTK_LABEL(win->marked_label), "Marked lines: none");
     return;
   }
 
   if (marked == total) {
-    gtk_label_set_text(GTK_LABEL(win->marked_label), "Marked: all");
+    gtk_label_set_text(GTK_LABEL(win->marked_label), "Marked lines: all");
     return;
   }
 
-  label = g_string_new("Marked: ");
+  label = g_string_new("Marked lines: ");
   line = 0;
   gtk_text_buffer_get_start_iter(buf, &iter);
   while (!gtk_text_iter_is_end(&iter)) {
@@ -1017,7 +1025,7 @@ static void update_marked_label(AppWindow *win) {
     marks = gtk_source_buffer_get_source_marks_at_line(GTK_SOURCE_BUFFER(buf),
                                                        line, "promptr-mark");
     if (marks != NULL) {
-      if (label->len > 8)
+      if (label->len > 14)
         g_string_append_c(label, ',');
       g_string_append_printf(label, "%d", line + 1);
       g_slist_free(marks);

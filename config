@@ -1,0 +1,36 @@
+# promptr runtime configuration
+# Each key falls back to the compile-time default if missing.
+
+[preferences]
+# Window size in pixels
+width=900
+height=700
+
+# Escape key hides the window (0 or 1)
+escape_hides=1
+
+# Layer-shell overlay on wlroots compositors (0 or 1)
+layer_shell=1
+
+# Desktop notification on copy (0 or 1)
+notify_on_copy=1
+
+# Gutter mark color in hex
+mark_bg_color=#33cc7f
+
+# Keyboard shortcuts (GTK accelerator format)
+kb_focus_prompt=<Control>k
+kb_copy_marked=<Control><Shift>c
+kb_quit=<Control>q
+
+# Path to the opencode binary
+opencode_path=opencode
+
+# Agent dropdown options (comma-separated)
+agent_options=linux_cmd,None
+
+# Model dropdown options (comma-separated)
+model_options=opencode-go/deepseek-v4-flash,opencode-go/deepseek-v4-pro,opencode/big-pickle,opencode/deepseek-v4-flash-free,None
+
+# Default marked lines on output (1-based, comma-separated, 0=all)
+marked_lines=0

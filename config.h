@@ -43,4 +43,8 @@
 /* Hex color for marked-line gutter indicator */
 #define MARK_BG_COLOR            "#33cc7f"
 
+#ifndef VERSION
+#define VERSION "unknown"
+#endif
+
 #endif
