@@ -14,32 +14,37 @@ make
 ### Debian / Ubuntu
 
 ```sh
-sudo apt install libgtk-4-dev
+sudo apt install libgtk-4-dev libgtk4-layer-shell-dev
 ```
 
 ### Arch Linux
 
 ```sh
-sudo pacman -S gtk4
+sudo pacman -S gtk4 gtk4-layer-shell
 ```
 
 ## Usage
 
-Launch the binary — a borderless window appears:
+Launch the binary — a borderless overlay window appears (uses layer-shell
+on wlroots-based compositors like Sway, Hyprland, and River):
 
 ```sh
 ./promptr
 ```
 
-- Type a query in the multi-line text input.
+- Type a query in the multi-line text input (the **Prompt** field).
 - Optionally select an **Agent** and a **Model** from the drop-downs.
+- The **CMD** preview updates in real time as you type or change
+  selections, showing exactly what command will run.
 - Press **Enter** or click **Submit** to run `opencode run`.
 - **Shift+Enter** inserts a newline in the prompt.
-- The command output appears in the read-only textarea below.
+- The command output appears in the read-only **Output** textarea below.
 - Use **Copy** to copy the output to the clipboard.
 - Press **Escape** or click **Close** to hide the window (process stays
   resident).  Subsequent launches reuse the same instance.
-- Click **Close & Quit** to fully exit.
+- Click **Close & Quit** to fully exit.  Your last selected model and
+  agent are persisted to `~/.local/share/promptr/state` and restored on
+  the next launch.
 
 ## Configuration
 

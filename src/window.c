@@ -1,6 +1,16 @@
 #include "window.h"
 #include "command.h"
+#include "state.h"
 #include "config.h"
+
+#include <gtk4-layer-shell/gtk4-layer-shell.h>
+
+typedef enum {
+    STATE_IDLE,
+    STATE_LOADING,
+    STATE_FINISHED,
+    STATE_CANCELED
+} AppState;
 
 static void on_submit(AppWindow *win);
 static void on_cancel(AppWindow *win);
@@ -25,7 +35,10 @@ static gboolean on_prompt_key_pressed(GtkEventControllerKey *controller,
                                       GdkModifierType state,
                                       AppWindow *win);
 static gboolean on_close_request(GtkWindow *window, gpointer user_data);
-static void     on_prompt_changed(GtkTextBuffer *buffer, AppWindow *win);
+static void on_prompt_changed(GtkTextBuffer *buffer, AppWindow *win);
+static void on_dropdown_changed(GObject *self, GParamSpec *pspec, AppWindow *win);
+static void update_cmd_preview(AppWindow *win);
+static void app_window_restore_state(AppWindow *win);
 
 static void load_css(void);
 
@@ -49,11 +62,18 @@ AppWindow *app_window_new(GtkApplication *app)
 
     win->window = gtk_window_new();
     gtk_window_set_application(GTK_WINDOW(win->window), app);
-    gtk_window_set_title(GTK_WINDOW(win->window), "promptr");
+    gtk_window_set_title(GTK_WINDOW(win->window), "Promptr");
     gtk_window_set_decorated(GTK_WINDOW(win->window), FALSE);
     gtk_window_set_default_size(GTK_WINDOW(win->window),
                                 DEFAULT_WIDTH, DEFAULT_HEIGHT);
     gtk_window_set_resizable(GTK_WINDOW(win->window), TRUE);
+
+    gtk_layer_init_for_window(GTK_WINDOW(win->window));
+    gtk_layer_set_layer(GTK_WINDOW(win->window),
+                        GTK_LAYER_SHELL_LAYER_OVERLAY);
+    gtk_layer_set_namespace(GTK_WINDOW(win->window), "promptr");
+    gtk_layer_set_keyboard_mode(GTK_WINDOW(win->window),
+                                GTK_LAYER_SHELL_KEYBOARD_MODE_ON_DEMAND);
 
     g_signal_connect(win->window, "close-request",
                      G_CALLBACK(on_close_request), win);
@@ -67,6 +87,10 @@ AppWindow *app_window_new(GtkApplication *app)
     gtk_window_set_child(GTK_WINDOW(win->window), outer_box);
 
     /* ── row 1: prompt input ────────────────────────────────── */
+    label = gtk_label_new("Prompt:");
+    gtk_label_set_xalign(GTK_LABEL(label), 0.0f);
+    gtk_box_append(GTK_BOX(outer_box), label);
+
     scroll = gtk_scrolled_window_new();
     gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scroll),
                                    GTK_POLICY_NEVER,
@@ -80,9 +104,30 @@ AppWindow *app_window_new(GtkApplication *app)
     win->prompt_view = gtk_text_view_new();
     gtk_text_view_set_wrap_mode(GTK_TEXT_VIEW(win->prompt_view),
                                 GTK_WRAP_WORD_CHAR);
+    gtk_widget_add_css_class(win->prompt_view, "monospace");
     gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scroll),
                                   win->prompt_view);
-    gtk_box_append(GTK_BOX(outer_box), scroll);
+
+    {
+        GtkWidget *overlay, *plabel;
+
+        overlay = gtk_overlay_new();
+        gtk_overlay_set_child(GTK_OVERLAY(overlay), scroll);
+
+        plabel = gtk_label_new(
+            "E.g. list all files in current dir, except .md files");
+        gtk_widget_set_halign(plabel, GTK_ALIGN_START);
+        gtk_widget_set_valign(plabel, GTK_ALIGN_START);
+        gtk_widget_set_margin_start(plabel, 10);
+        gtk_widget_set_margin_top(plabel, 6);
+        gtk_widget_set_opacity(plabel, 0.5);
+        gtk_widget_add_css_class(plabel, "dim-label");
+        gtk_widget_set_can_target(plabel, FALSE);
+        gtk_overlay_add_overlay(GTK_OVERLAY(overlay), plabel);
+        win->placeholder_label = plabel;
+
+        gtk_box_append(GTK_BOX(outer_box), overlay);
+    }
 
     buffer = gtk_text_view_get_buffer(GTK_TEXT_VIEW(win->prompt_view));
     g_signal_connect(buffer, "changed", G_CALLBACK(on_prompt_changed), win);
@@ -108,6 +153,8 @@ AppWindow *app_window_new(GtkApplication *app)
         gtk_drop_down_new(G_LIST_MODEL(list), NULL);
     gtk_drop_down_set_selected(GTK_DROP_DOWN(win->agent_dropdown), 0);
     gtk_widget_set_sensitive(win->agent_dropdown, has_options);
+    g_signal_connect(win->agent_dropdown, "notify::selected",
+                     G_CALLBACK(on_dropdown_changed), win);
     gtk_box_append(GTK_BOX(row), win->agent_dropdown);
 
     label = gtk_label_new("Model:");
@@ -123,6 +170,8 @@ AppWindow *app_window_new(GtkApplication *app)
         gtk_drop_down_new(G_LIST_MODEL(list), NULL);
     gtk_drop_down_set_selected(GTK_DROP_DOWN(win->model_dropdown), 0);
     gtk_widget_set_sensitive(win->model_dropdown, has_options);
+    g_signal_connect(win->model_dropdown, "notify::selected",
+                     G_CALLBACK(on_dropdown_changed), win);
     gtk_box_append(GTK_BOX(row), win->model_dropdown);
 
     win->submit_btn = gtk_button_new_with_label("Submit");
@@ -136,10 +185,11 @@ AppWindow *app_window_new(GtkApplication *app)
     /* ── row 3: cmd label + cancel ──────────────────────────── */
     row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
 
-    win->cmd_label = gtk_label_new("CMD: ");
+    win->cmd_label = gtk_label_new("CMD: opencode run <query>");
     gtk_label_set_xalign(GTK_LABEL(win->cmd_label), 0.0f);
-    gtk_label_set_ellipsize(GTK_LABEL(win->cmd_label), PANGO_ELLIPSIZE_MIDDLE);
+    gtk_label_set_wrap(GTK_LABEL(win->cmd_label), TRUE);
     gtk_widget_set_hexpand(win->cmd_label, TRUE);
+    gtk_widget_add_css_class(win->cmd_label, "monospace");
     gtk_box_append(GTK_BOX(row), win->cmd_label);
 
     win->cancel_btn = gtk_button_new_with_label("Cancel");
@@ -152,6 +202,10 @@ AppWindow *app_window_new(GtkApplication *app)
     gtk_box_append(GTK_BOX(outer_box), row);
 
     /* ── row 4: output ──────────────────────────────────────── */
+    label = gtk_label_new("Output:");
+    gtk_label_set_xalign(GTK_LABEL(label), 0.0f);
+    gtk_box_append(GTK_BOX(outer_box), label);
+
     scroll = gtk_scrolled_window_new();
     gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scroll),
                                    GTK_POLICY_AUTOMATIC,
@@ -189,6 +243,9 @@ AppWindow *app_window_new(GtkApplication *app)
     gtk_box_append(GTK_BOX(row), win->quit_btn);
 
     gtk_box_append(GTK_BOX(outer_box), row);
+
+    app_window_restore_state(win);
+    update_cmd_preview(win);
 
     return win;
 }
@@ -246,6 +303,8 @@ static void set_load_state_common(AppWindow *win, gboolean loading)
 static void set_loading_state(AppWindow *win, const char *cmd)
 {
     char *label_text;
+
+    win->state = STATE_LOADING;
     set_load_state_common(win, TRUE);
 
     label_text = g_strdup_printf("Running: %s", cmd);
@@ -262,6 +321,7 @@ static void set_finished_state(AppWindow *win, char *cmd, gint64 elapsed,
     gint64 ms;
 
     set_load_state_common(win, FALSE);
+    win->state = STATE_FINISHED;
 
     ms = elapsed / 1000;
     label_text = g_strdup_printf("CMD: %s  Finished. Took %" G_GINT64_FORMAT "ms.",
@@ -290,6 +350,7 @@ static void set_canceled_state(AppWindow *win, char *cmd)
     char *label_text;
 
     set_load_state_common(win, FALSE);
+    win->state = STATE_CANCELED;
 
     label_text = g_strdup_printf("CMD: %s  Cancelled.", cmd);
     gtk_label_set_text(GTK_LABEL(win->cmd_label), label_text);
@@ -450,7 +511,10 @@ static gboolean on_prompt_key_pressed(GtkEventControllerKey *controller,
 static void on_prompt_changed(GtkTextBuffer *buffer, AppWindow *win)
 {
     (void)buffer;
+    gtk_widget_set_visible(win->placeholder_label,
+        gtk_text_buffer_get_char_count(buffer) == 0);
     update_submit_sensitivity(win);
+    update_cmd_preview(win);
 }
 
 static void update_submit_sensitivity(AppWindow *win)
@@ -529,6 +593,101 @@ static void set_prompt_focused(AppWindow *win)
     gtk_widget_grab_focus(win->prompt_view);
 }
 
+/* ── dropdown change ──────────────────────────────────────────── */
+
+static void on_dropdown_changed(GObject *self, GParamSpec *pspec,
+                                AppWindow *win)
+{
+    (void)self;
+    (void)pspec;
+    update_cmd_preview(win);
+}
+
+/* ── cmd preview ──────────────────────────────────────────────── */
+
+static void update_cmd_preview(AppWindow *win)
+{
+    char *query, *agent, *model;
+    GString *display;
+
+    if (win->state == STATE_LOADING) return;
+
+    if (win->state == STATE_FINISHED || win->state == STATE_CANCELED)
+        win->state = STATE_IDLE;
+
+    query = get_trimmed_text(win->prompt_view);
+    agent = get_selected_text(win->agent_dropdown);
+    model = get_selected_text(win->model_dropdown);
+
+    display = g_string_new("CMD: opencode run");
+    if (model != NULL
+        && g_strcmp0(model, "None") != 0
+        && model[0] != '\0')
+        g_string_append_printf(display, " --model %s", model);
+    if (agent != NULL
+        && g_strcmp0(agent, "None") != 0
+        && agent[0] != '\0')
+        g_string_append_printf(display, " --agent %s", agent);
+    if (query != NULL && query[0] != '\0')
+        g_string_append_printf(display, " %s", query);
+    else
+        g_string_append(display, " <query>");
+
+    gtk_label_set_text(GTK_LABEL(win->cmd_label), display->str);
+    g_string_free(display, TRUE);
+    g_free(query);
+    g_free(agent);
+    g_free(model);
+}
+
+/* ── state persistence ────────────────────────────────────────── */
+
+void app_window_save_state(AppWindow *win)
+{
+    char *agent, *model;
+
+    agent = get_selected_text(win->agent_dropdown);
+    model = get_selected_text(win->model_dropdown);
+    state_save(model, agent);
+    g_free(agent);
+    g_free(model);
+}
+
+static void select_option_by_value(GtkWidget *dropdown, const char *value)
+{
+    GListModel *model;
+    guint i, n;
+
+    if (value == NULL) return;
+
+    model = gtk_drop_down_get_model(GTK_DROP_DOWN(dropdown));
+    n = g_list_model_get_n_items(model);
+    for (i = 0; i < n; i++) {
+        g_autoptr(GObject) item = g_list_model_get_item(model, i);
+        const char *str;
+
+        if (item == NULL) continue;
+        str = gtk_string_object_get_string(GTK_STRING_OBJECT(item));
+        if (str != NULL && g_strcmp0(str, value) == 0) {
+            gtk_drop_down_set_selected(GTK_DROP_DOWN(dropdown), i);
+            return;
+        }
+    }
+}
+
+static void app_window_restore_state(AppWindow *win)
+{
+    g_autofree char *model = NULL;
+    g_autofree char *agent = NULL;
+
+    if (!state_load(&model, &agent)) return;
+
+    if (model != NULL)
+        select_option_by_value(win->model_dropdown, model);
+    if (agent != NULL)
+        select_option_by_value(win->agent_dropdown, agent);
+}
+
 /* ── CSS ───────────────────────────────────────────────────────── */
 
 static void load_css(void)
@@ -542,7 +701,7 @@ static void load_css(void)
 
     provider = gtk_css_provider_new();
     gtk_css_provider_load_from_string(provider,
-        "textview.monospace { font-family: monospace; }");
+        "textview.monospace, label.monospace { font-family: monospace; }");
     display = gdk_display_get_default();
     gtk_style_context_add_provider_for_display(display,
         GTK_STYLE_PROVIDER(provider),

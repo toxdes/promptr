@@ -24,6 +24,7 @@ static void on_shutdown(GApplication *app, gpointer user_data)
     (void)user_data;
     win = g_object_get_data(G_OBJECT(app), "window");
     if (win != NULL) {
+        app_window_save_state(win);
         app_window_close_and_quit(win);
         g_object_set_data(G_OBJECT(app), "window", NULL);
     }
@@ -34,6 +35,7 @@ int main(int argc, char *argv[])
     GtkApplication *app;
     int status;
 
+    g_set_prgname("promptr");
     app = gtk_application_new("com.toxdes.promptr",
                               G_APPLICATION_DEFAULT_FLAGS);
     g_signal_connect(app, "activate", G_CALLBACK(on_activate), NULL);

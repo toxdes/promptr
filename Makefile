@@ -1,11 +1,13 @@
 CC      ?= gcc
 PKG_CONF := pkg-config
 
-GTK_CFLAGS := $(shell $(PKG_CONF) --cflags gtk4 | sed 's/-I/-isystem /g')
-GTK_LIBS   := $(shell $(PKG_CONF) --libs gtk4)
+GTK_CFLAGS  := $(shell $(PKG_CONF) --cflags gtk4 | sed 's/-I/-isystem /g')
+GTK_LIBS    := $(shell $(PKG_CONF) --libs gtk4)
+LSH_CFLAGS  := $(shell $(PKG_CONF) --cflags gtk4-layer-shell-0 | sed 's/-I/-isystem /g')
+LSH_LIBS    := $(shell $(PKG_CONF) --libs gtk4-layer-shell-0)
 
-CFLAGS  := -std=c11 -pedantic -Wall -Wextra -Werror -O2 -I. $(GTK_CFLAGS)
-LDFLAGS := $(GTK_LIBS)
+CFLAGS  := -std=c11 -pedantic -Wall -Wextra -Werror -O2 -I. $(GTK_CFLAGS) $(LSH_CFLAGS)
+LDFLAGS := $(GTK_LIBS) $(LSH_LIBS)
 
 SRCDIR   := src
 BUILDDIR := build
