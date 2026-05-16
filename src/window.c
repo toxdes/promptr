@@ -236,22 +236,35 @@ AppWindow *app_window_new(GtkApplication *app)
 
     gtk_box_append(GTK_BOX(outer_box), row);
 
-    /* ── row 3: cmd label ────────────────────────────────────── */
-    row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
-    gtk_widget_set_margin_top(row, 4);
+    /* ── row 3: cmd label + preview ───────────────────────────── */
+    label = gtk_label_new("Cmd:");
+    gtk_label_set_xalign(GTK_LABEL(label), 0.0f);
+    gtk_widget_set_margin_top(label, 8);
+    gtk_widget_set_margin_bottom(label, 4);
+    gtk_box_append(GTK_BOX(outer_box), label);
+
+    scroll = gtk_scrolled_window_new();
+    gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scroll),
+                                   GTK_POLICY_NEVER,
+                                   GTK_POLICY_AUTOMATIC);
+    gtk_scrolled_window_set_min_content_height(
+        GTK_SCROLLED_WINDOW(scroll), 36);
+    gtk_scrolled_window_set_propagate_natural_height(
+        GTK_SCROLLED_WINDOW(scroll), TRUE);
+    gtk_widget_set_vexpand(scroll, TRUE);
 
     win->cmd_label = gtk_text_view_new();
     gtk_text_view_set_editable(GTK_TEXT_VIEW(win->cmd_label), FALSE);
     gtk_text_view_set_cursor_visible(GTK_TEXT_VIEW(win->cmd_label), FALSE);
     gtk_text_view_set_wrap_mode(GTK_TEXT_VIEW(win->cmd_label),
                                 GTK_WRAP_WORD_CHAR);
-    gtk_text_view_set_top_margin(GTK_TEXT_VIEW(win->cmd_label), 2);
-    gtk_text_view_set_bottom_margin(GTK_TEXT_VIEW(win->cmd_label), 2);
+    gtk_text_view_set_left_margin(GTK_TEXT_VIEW(win->cmd_label), 10);
+    gtk_text_view_set_top_margin(GTK_TEXT_VIEW(win->cmd_label), 4);
     gtk_widget_set_hexpand(win->cmd_label, TRUE);
     gtk_widget_add_css_class(win->cmd_label, "monospace");
-    gtk_box_append(GTK_BOX(row), win->cmd_label);
-
-    gtk_box_append(GTK_BOX(outer_box), row);
+    gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scroll),
+                                  win->cmd_label);
+    gtk_box_append(GTK_BOX(outer_box), scroll);
 
     /* ── row 4: output ──────────────────────────────────────── */
     label = gtk_label_new("Output:");

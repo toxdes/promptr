@@ -30,8 +30,8 @@ static const char *MODEL_OPTIONS[] = {
     NULL
 };
 
-#define DEFAULT_WIDTH  800
-#define DEFAULT_HEIGHT 600
+#define DEFAULT_WIDTH  900
+#define DEFAULT_HEIGHT 700
 
 /* Set to 0 to disable Escape-key hide behaviour */
 #define ESCAPE_HIDES_WINDOW 1
@@ -63,7 +63,7 @@ static const char *MODEL_OPTIONS[] = {
  * The array MUST be terminated with -1.
  * You can click any line number in the gutter to toggle its mark.
  */
-static const int DEFAULT_MARKED_LINES[] = { 0 };
+static const int DEFAULT_MARKED_LINES[] = { 1, -1 };
 
 /* Set to 0 to disable desktop notification on copy */
 #define NOTIFY_ON_COPY 1
