@@ -504,9 +504,7 @@ static void on_submit(AppWindow *win)
     model = get_selected_text(win->model_dropdown);
 
     {
-        g_autofree char *tmpl;
-        tmpl = g_build_filename(g_get_tmp_dir(), "promptr-XXXXXX", NULL);
-        tmpdir = g_dir_make_tmp(tmpl, &err);
+        tmpdir = g_dir_make_tmp("promptr-XXXXXX", &err);
         if (tmpdir == NULL) {
             g_warning("Failed to create temp dir: %s", err->message);
             g_clear_error(&err);
