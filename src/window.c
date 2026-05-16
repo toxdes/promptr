@@ -40,10 +40,13 @@ static void on_prompt_changed(GtkTextBuffer *buffer, AppWindow *win);
 static void on_dropdown_changed(GObject *self, GParamSpec *pspec, AppWindow *win);
 static void update_cmd_preview(AppWindow *win);
 static void app_window_restore_state(AppWindow *win);
-static void on_gutter_copy(GtkSourceGutterRenderer *renderer,
+static void on_gutter_mark(GtkSourceGutterRenderer *renderer,
                            GtkTextIter *iter,
                            GdkRectangle *area,
                            gpointer user_data);
+static void apply_default_marks(GtkTextBuffer *buf);
+static char *get_marked_text(AppWindow *win);
+static GdkPixbuf *create_mark_pixbuf(void);
 
 static void load_css(void);
 
@@ -245,18 +248,22 @@ AppWindow *app_window_new(GtkApplication *app)
 
     {
         GtkSourceGutter *gutter;
-        GtkSourceGutterRenderer *copy_btn;
+        GtkSourceGutterRenderer *marker;
+        GdkPixbuf *dot;
 
         gutter = gtk_source_view_get_gutter(
             GTK_SOURCE_VIEW(win->output_view),
             GTK_TEXT_WINDOW_LEFT);
-        copy_btn = gtk_source_gutter_renderer_text_new();
-        gtk_source_gutter_renderer_text_set_text(
-            GTK_SOURCE_GUTTER_RENDERER_TEXT(copy_btn), " \xe2\x86\xaa ", -1);
-        gtk_source_gutter_renderer_set_xalign(copy_btn, 0.5f);
-        g_signal_connect(copy_btn, "activate",
-                         G_CALLBACK(on_gutter_copy), win);
-        gtk_source_gutter_insert(gutter, copy_btn, -1);
+
+        dot = create_mark_pixbuf();
+        marker = gtk_source_gutter_renderer_pixbuf_new();
+        gtk_source_gutter_renderer_pixbuf_set_pixbuf(
+            GTK_SOURCE_GUTTER_RENDERER_PIXBUF(marker), dot);
+        g_object_unref(dot);
+        gtk_source_gutter_renderer_set_xalign(marker, 0.5f);
+        g_signal_connect(marker, "activate",
+                         G_CALLBACK(on_gutter_mark), win);
+        gtk_source_gutter_insert(gutter, marker, -1);
     }
     gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scroll),
                                   win->output_view);
@@ -376,6 +383,7 @@ static void set_finished_state(AppWindow *win, char *cmd, gint64 elapsed,
         GtkTextBuffer *buf;
         buf = gtk_text_view_get_buffer(GTK_TEXT_VIEW(win->output_view));
         gtk_text_buffer_set_text(buf, output, -1);
+        apply_default_marks(buf);
         gtk_widget_set_sensitive(win->copy_btn, TRUE);
     } else {
         GtkTextBuffer *buf;
@@ -479,15 +487,10 @@ static void on_cancel(AppWindow *win)
 
 static void on_copy(AppWindow *win)
 {
-    GtkTextBuffer *buf;
-    GtkTextIter start, end;
     char *text;
     GdkClipboard *clipboard;
 
-    buf = gtk_text_view_get_buffer(GTK_TEXT_VIEW(win->output_view));
-    gtk_text_buffer_get_bounds(buf, &start, &end);
-    text = gtk_text_buffer_get_text(buf, &start, &end, FALSE);
-
+    text = get_marked_text(win);
     clipboard = gdk_display_get_clipboard(
         gtk_widget_get_display(win->window));
     gdk_clipboard_set_text(clipboard, text);
@@ -691,33 +694,114 @@ static void update_cmd_preview(AppWindow *win)
     g_free(model);
 }
 
-/* ── gutter copy ──────────────────────────────────────────────── */
+/* ── gutter marks ──────────────────────────────────────────────── */
 
-static void on_gutter_copy(GtkSourceGutterRenderer *renderer,
+static GdkPixbuf *create_mark_pixbuf(void)
+{
+    GdkPixbuf *p;
+
+    p = gdk_pixbuf_new(GDK_COLORSPACE_RGB, TRUE, 8, 10, 10);
+    gdk_pixbuf_fill(p, 0x3584e4ff);
+    return p;
+}
+
+static void on_gutter_mark(GtkSourceGutterRenderer *renderer,
                            GtkTextIter *iter,
                            GdkRectangle *area,
                            gpointer user_data)
 {
-    AppWindow *win = user_data;
-    GtkTextIter start, end;
     GtkTextBuffer *buf;
-    char *text;
-    GdkClipboard *clipboard;
+    int line;
+    GSList *marks;
 
     (void)renderer;
     (void)area;
+    (void)user_data;
 
-    start = *iter;
-    end = *iter;
-    gtk_text_iter_forward_to_line_end(&end);
+    buf = gtk_text_iter_get_buffer(iter);
+    line = gtk_text_iter_get_line(iter);
 
-    buf = gtk_text_iter_get_buffer(&start);
-    text = gtk_text_buffer_get_text(buf, &start, &end, FALSE);
+    marks = gtk_source_buffer_get_source_marks_at_line(
+        GTK_SOURCE_BUFFER(buf), line, "promptr-mark");
 
-    clipboard = gdk_display_get_clipboard(
-        gtk_widget_get_display(win->window));
-    gdk_clipboard_set_text(clipboard, text);
-    g_free(text);
+    if (marks != NULL) {
+        for (GSList *m = marks; m != NULL; m = m->next)
+            gtk_text_buffer_delete_mark(buf, GTK_TEXT_MARK(m->data));
+    } else {
+        gtk_source_buffer_create_source_mark(
+            GTK_SOURCE_BUFFER(buf), NULL, "promptr-mark", iter);
+    }
+
+    if (marks != NULL)
+        g_slist_free(marks);
+}
+
+static void apply_default_marks(GtkTextBuffer *buf)
+{
+    GtkTextIter iter;
+    int i, total, line;
+    gboolean mark_all;
+
+    if (DEFAULT_MARKED_LINES[0] == -1) return;
+
+    mark_all = (DEFAULT_MARKED_LINES[0] == 0);
+
+    if (mark_all) {
+        gtk_text_buffer_get_start_iter(buf, &iter);
+        while (!gtk_text_iter_is_end(&iter)) {
+            gtk_source_buffer_create_source_mark(
+                GTK_SOURCE_BUFFER(buf), NULL, "promptr-mark", &iter);
+            gtk_text_iter_forward_line(&iter);
+        }
+        return;
+    }
+
+    total = gtk_text_buffer_get_line_count(buf);
+    for (i = 0; DEFAULT_MARKED_LINES[i] != -1; i++) {
+        line = DEFAULT_MARKED_LINES[i] - 1;
+        if (line >= 0 && line < total) {
+            gtk_text_buffer_get_iter_at_line(buf, &iter, line);
+            gtk_source_buffer_create_source_mark(
+                GTK_SOURCE_BUFFER(buf), NULL, "promptr-mark", &iter);
+        }
+    }
+}
+
+static char *get_marked_text(AppWindow *win)
+{
+    GtkTextBuffer *buf;
+    GString *result;
+    GtkTextIter iter;
+    int line;
+
+    buf = gtk_text_view_get_buffer(GTK_TEXT_VIEW(win->output_view));
+    result = g_string_new("");
+    line = 0;
+
+    gtk_text_buffer_get_start_iter(buf, &iter);
+    while (!gtk_text_iter_is_end(&iter)) {
+        GSList *marks;
+
+        marks = gtk_source_buffer_get_source_marks_at_line(
+            GTK_SOURCE_BUFFER(buf), line, "promptr-mark");
+        if (marks != NULL) {
+            GtkTextIter start, end;
+            g_autofree char *text;
+
+            start = iter;
+            end = iter;
+            gtk_text_iter_forward_to_line_end(&end);
+            text = gtk_text_buffer_get_text(buf, &start, &end, FALSE);
+            if (result->len > 0)
+                g_string_append_c(result, '\n');
+            g_string_append(result, text);
+            g_slist_free(marks);
+        }
+        gtk_text_iter_forward_line(&iter);
+        line++;
+    }
+
+    return g_string_free(result, FALSE);
 }
 
 /* ── state persistence ────────────────────────────────────────── */

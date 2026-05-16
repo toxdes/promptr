@@ -44,4 +44,19 @@ static const char *MODEL_OPTIONS[] = {
 #define LAYER_SHELL_ENABLED 0
 #endif
 
+/*
+ * Lines to pre-mark in the output gutter (1-based line numbers).
+ * Marks appear as blue dots in the gutter.  The Copy button copies
+ * only marked lines.
+ *
+ *   { 0 }      — mark all lines
+ *   { -1 }     — mark no lines (manual click-to-toggle only)
+ *   { 1, 5, 10, -1 }  — mark lines 1, 5, and 10
+ *   { 1, 2, 3, 4, 5, 6, -1 }  — mark lines 1 through 6
+ *
+ * The array MUST be terminated with -1.
+ * You can click any line number in the gutter to toggle its mark.
+ */
+static const int DEFAULT_MARKED_LINES[] = { 0 };
+
 #endif
