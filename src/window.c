@@ -880,7 +880,7 @@ static void update_cmd_preview(AppWindow *win)
     agent = get_selected_text(win->agent_dropdown);
     model = get_selected_text(win->model_dropdown);
 
-    display = g_string_new("CMD: opencode run");
+    display = g_string_new("CMD: opencode run --dir <tmp>");
     if (model != NULL
         && g_strcmp0(model, "None") != 0
         && model[0] != '\0')
