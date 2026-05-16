@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
-VERSION="0.1.0"
+VERSION=$(cat /build/VERSION)
 ARCH="${TARGETARCH}"
 OUT="/output"
 

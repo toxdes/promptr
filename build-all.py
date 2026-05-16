@@ -17,7 +17,7 @@ import sys
 import shutil
 from pathlib import Path
 
-VERSION = "0.1.0"
+VERSION = Path("VERSION").read_text().strip()
 DIST = Path("dist")
 PLATFORMS = "linux/amd64,linux/arm64"
 
