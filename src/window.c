@@ -782,6 +782,10 @@ static void load_css(void)
     provider = gtk_css_provider_new();
     gtk_css_provider_load_from_string(provider,
         "textview.monospace, label.monospace { font-family: monospace; }"
+        "textview gutter {"
+        "  background-color: @theme_bg_color;"
+        "  color: @theme_fg_color;"
+        "}"
         "dropdown button arrow {"
         "  -gtk-icon-source: -gtk-icontheme(\"pan-down-symbolic\");"
         "}");
