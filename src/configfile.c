@@ -215,6 +215,8 @@ static const ConfigDefault CONFIG_DEFAULTS[] = {
     {"kb_copy_marked", KB_COPY_MARKED, NULL},
     {"kb_close", KB_CLOSE, NULL},
     {"kb_quit", KB_QUIT, NULL},
+    {"kb_log", KB_LOG, NULL},
+    {"kb_shortcuts", KB_SHORTCUTS, NULL},
     {"opencode_path", OPENCODE_PATH, "# Path to the opencode binary"},
     {"agent_options", DEFAULT_AGENT_OPTIONS,
      "# Agent dropdown options (comma-separated)"},

@@ -20,6 +20,8 @@
 #define KB_COPY_MARKED        "<Control><Shift>c"
 #define KB_CLOSE              "<Control>q"
 #define KB_QUIT               "<Control><Shift>q"
+#define KB_LOG                "<Control><Shift>d"
+#define KB_SHORTCUTS          "<Control>F1"
 
 /* Layer-shell overlay on wlroots compositors (0 or 1) */
 #define LAYER_SHELL_ENABLED   0

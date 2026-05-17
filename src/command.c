@@ -102,6 +102,8 @@ static void communicate_cb(GObject *source, GAsyncResult *result,
   success = g_subprocess_communicate_utf8_finish(proc, result, &stdout_str,
                                                  &stderr_str, &error);
 
+  if (success)
+    g_subprocess_wait(proc, NULL, NULL);
   exit_code = g_subprocess_get_exit_status(proc);
 
   destroyed = win->destroyed;
@@ -164,6 +166,7 @@ static char **build_argv(const char *opencode_bin, const char *model,
     g_ptr_array_add(args, g_strdup(agent));
   }
 
+  g_ptr_array_add(args, g_strdup("--"));
   if (query != NULL)
     g_ptr_array_add(args, g_strdup(query));
   else

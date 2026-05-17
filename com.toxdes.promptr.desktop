@@ -7,3 +7,4 @@ Icon=promptr
 Terminal=false
 Categories=Utility;
 StartupNotify=true
+DBusActivatable=true

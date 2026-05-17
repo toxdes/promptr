@@ -57,7 +57,8 @@ clean:
 install: $(TARGET)
 	install -D -m755 $(TARGET) $(DESTDIR)$(BINDIR)/$(TARGET)
 	install -D -m644 data/promptr.svg $(DESTDIR)$(ICONDIR)/promptr.svg
-	install -D -m644 promptr.desktop $(DESTDIR)$(APPDIR)/promptr.desktop
+	install -D -m644 com.toxdes.promptr.desktop $(DESTDIR)$(APPDIR)/com.toxdes.promptr.desktop
+	rm -f $(DESTDIR)$(APPDIR)/promptr.desktop
 
 uninstall:
 	rm -f $(DESTDIR)$(BINDIR)/$(TARGET)

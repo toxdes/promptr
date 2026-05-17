@@ -27,7 +27,7 @@ mkdir -p "/pkg-deb/DEBIAN" "/pkg-deb/usr/bin" \
     "/pkg-deb/usr/share/applications"
 cp /build/promptr "/pkg-deb/usr/bin/promptr"
 cp /build/data/promptr.svg "/pkg-deb/usr/share/icons/hicolor/scalable/apps/promptr.svg"
-cp /build/promptr.desktop "/pkg-deb/usr/share/applications/promptr.desktop"
+cp /build/com.toxdes.promptr.desktop "/pkg-deb/usr/share/applications/com.toxdes.promptr.desktop"
 chmod 755 "/pkg-deb/usr/bin/promptr"
 
 cat > "/pkg-deb/DEBIAN/control" <<EOF
@@ -74,12 +74,12 @@ mkdir -p %{buildroot}/usr/bin \
          %{buildroot}/usr/share/applications
 install -m755 /build/promptr %{buildroot}/usr/bin/promptr
 install -m644 /build/data/promptr.svg %{buildroot}/usr/share/icons/hicolor/scalable/apps/promptr.svg
-install -m644 /build/promptr.desktop %{buildroot}/usr/share/applications/promptr.desktop
+install -m644 /build/com.toxdes.promptr.desktop %{buildroot}/usr/share/applications/com.toxdes.promptr.desktop
 
 %files
 /usr/bin/promptr
 /usr/share/icons/hicolor/scalable/apps/promptr.svg
-/usr/share/applications/promptr.desktop
+/usr/share/applications/com.toxdes.promptr.desktop
 EOF
 
 rpmbuild -bb --define "_topdir /tmp/rpm" \

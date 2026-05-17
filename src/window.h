@@ -21,11 +21,13 @@ typedef struct _AppWindow {
   GtkWidget *close_btn;
   GtkWidget *quit_btn;
   GtkWidget *marked_label;
-  GtkWidget *version_label;
-  GtkWidget *hints_label;
   GtkWidget *output_label;
-  GtkWidget *details_btn;
-  GtkWidget *details_popup;
+  GtkWidget *log_btn;
+  GtkWidget *log_popup;
+  GtkWidget *status_bar;
+  GtkWidget *shortcuts_btn;
+  GtkWidget *shortcuts_popup;
+  FILE *log_file;
 
   GSubprocess *subprocess;
   GCancellable *cancellable;
@@ -48,8 +50,10 @@ typedef struct _AppWindow {
   GdkModifierType kb_close_mods;
   guint kb_quit_keyval;
   GdkModifierType kb_quit_mods;
-
-  guint copy_flash_source;
+  guint kb_log_keyval;
+  GdkModifierType kb_log_mods;
+  guint kb_shortcuts_keyval;
+  GdkModifierType kb_shortcuts_mods;
 } AppWindow;
 
 AppWindow *app_window_new(GtkApplication *app);

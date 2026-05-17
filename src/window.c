@@ -6,6 +6,9 @@
 
 #include <gtk4-layer-shell/gtk4-layer-shell.h>
 #include <gtksourceview/gtksource.h>
+#include <stdio.h>
+#include <string.h>
+#include <time.h>
 #include <unistd.h>
 
 typedef enum {
@@ -47,16 +50,51 @@ static void on_prompt_changed(GtkTextBuffer *buffer, AppWindow *win);
 static void on_dropdown_changed(GObject *self, GParamSpec *pspec,
                                 AppWindow *win);
 static void update_cmd_preview(AppWindow *win);
-static void on_details(AppWindow *win);
-static void on_details_close(AppWindow *win);
+static void on_log(AppWindow *win);
+static void on_log_close(AppWindow *win);
+static void on_shortcuts(AppWindow *win);
+static void on_shortcuts_close(AppWindow *win);
+struct PopupEscCtx {
+  AppWindow *win;
+  void (*close_fn)(AppWindow *);
+};
+
+static gboolean on_popup_esc(GtkEventControllerKey *ctrl, guint keyval,
+                             guint keycode, GdkModifierType state,
+                             gpointer data) {
+  struct PopupEscCtx *ctx = data;
+
+  (void)ctrl;
+  (void)keycode;
+  (void)state;
+  if (keyval == GDK_KEY_Escape) {
+    ctx->close_fn(ctx->win);
+    return GDK_EVENT_STOP;
+  }
+  return GDK_EVENT_PROPAGATE;
+}
+
+static void esc_ctx_free(gpointer data, GClosure *closure) {
+  (void)closure;
+  g_free(data);
+}
 static void app_window_restore_state(AppWindow *win);
-static void set_cmd_text(AppWindow *win, const char *text);
+static void set_status_text(AppWindow *win, const char *text);
+static void log_append(AppWindow *win, const char *fmt, ...)
+    __attribute__((format(printf, 2, 3)));
 static gboolean hex_to_rgba(const char *hex, GdkRGBA *out);
 static void on_gutter_click(GtkGestureClick *gesture, int n_press, double x,
                             double y, AppWindow *win);
 static void update_marked_label(AppWindow *win);
 static void apply_default_marks(AppWindow *win, GtkTextBuffer *buf);
 static char *get_marked_text(AppWindow *win);
+static char *accel_to_human(const char *accel);
+static void status_bar_on_hover(GtkWidget *widget, AppWindow *win,
+                                const char *text);
+static GtkWidget *kbd_label(const char *text);
+static GtkWidget *desc_label(const char *text);
+static GtkWidget *cell_box(GtkWidget *child, const char *row_class,
+                           gboolean last_col);
 
 static void load_css(int prompt_font_size, int output_font_size);
 
@@ -64,7 +102,7 @@ static void load_css(int prompt_font_size, int output_font_size);
 
 AppWindow *app_window_new(GtkApplication *app) {
   AppWindow *win;
-  GtkWidget *outer_box, *row, *scroll, *label;
+  GtkWidget *outer_box, *content_box, *main_box, *row, *scroll, *label;
   GtkEventController *key_ctrl;
   GtkStringList *list;
   GtkTextBuffer *buffer;
@@ -91,6 +129,29 @@ AppWindow *app_window_new(GtkApplication *app) {
       win->opencode_bin = g_strdup(raw);
   }
   {
+    const char *data_dir;
+    g_autofree char *log_dir = NULL;
+    g_autofree char *log_path = NULL;
+    char timestr[64];
+    time_t now;
+    struct tm *tm;
+
+    data_dir = g_get_user_data_dir();
+    log_dir = g_build_filename(data_dir, "promptr", "logs", NULL);
+    g_mkdir_with_parents(log_dir, 0700);
+
+    now = time(NULL);
+    tm = localtime(&now);
+    strftime(timestr, sizeof(timestr), "promptr-%Y%m%dT%H%M%S.log", tm);
+    log_path = g_build_filename(log_dir, timestr, NULL);
+    win->log_file = fopen(log_path, "w");
+    if (win->log_file != NULL) {
+      strftime(timestr, sizeof(timestr), "%Y-%m-%d %H:%M:%S", tm);
+      fprintf(win->log_file, "Promptr v" VERSION " — session %s\n", timestr);
+      fflush(win->log_file);
+    }
+  }
+  {
     int prompt_fs, output_fs;
 
     prompt_fs = runtime_config_get_int(win->config, "prompt_font_size",
@@ -109,6 +170,65 @@ AppWindow *app_window_new(GtkApplication *app) {
   gtk_accelerator_parse(kb, &win->kb_close_keyval, &win->kb_close_mods);
   kb = runtime_config_get_string(win->config, "kb_quit", KB_QUIT);
   gtk_accelerator_parse(kb, &win->kb_quit_keyval, &win->kb_quit_mods);
+  kb = runtime_config_get_string(win->config, "kb_shortcuts", KB_SHORTCUTS);
+  gtk_accelerator_parse(kb, &win->kb_shortcuts_keyval, &win->kb_shortcuts_mods);
+  kb = runtime_config_get_string(win->config, "kb_log", KB_LOG);
+  gtk_accelerator_parse(kb, &win->kb_log_keyval, &win->kb_log_mods);
+
+  {
+    struct {
+      const char *name;
+      guint keyval;
+      GdkModifierType mods;
+    } binds[] = {
+        {"focus", win->kb_focus_keyval, win->kb_focus_mods},
+        {"copy", win->kb_copy_keyval, win->kb_copy_mods},
+        {"close", win->kb_close_keyval, win->kb_close_mods},
+        {"quit", win->kb_quit_keyval, win->kb_quit_mods},
+        {"log", win->kb_log_keyval, win->kb_log_mods},
+        {"shortcuts", win->kb_shortcuts_keyval, win->kb_shortcuts_mods},
+    };
+    gboolean conflict = FALSE;
+    int n = (int)G_N_ELEMENTS(binds);
+
+    for (int i = 0; i < n && !conflict; i++)
+      for (int j = i + 1; j < n; j++)
+        if (binds[i].keyval == binds[j].keyval &&
+            binds[i].mods == binds[j].mods) {
+          g_warning("Shortcut conflict: \"%s\" and \"%s\" both resolve to "
+                    "the same key combination",
+                    binds[i].name, binds[j].name);
+          conflict = TRUE;
+          break;
+        }
+  }
+
+  {
+    struct {
+      const char *name;
+      guint keyval;
+      GdkModifierType mods;
+    } binds[] = {
+        {"focus", win->kb_focus_keyval, win->kb_focus_mods},
+        {"copy", win->kb_copy_keyval, win->kb_copy_mods},
+        {"close", win->kb_close_keyval, win->kb_close_mods},
+        {"quit", win->kb_quit_keyval, win->kb_quit_mods},
+        {"log", win->kb_log_keyval, win->kb_log_mods},
+        {"shortcuts", win->kb_shortcuts_keyval, win->kb_shortcuts_mods},
+    };
+    gboolean conflict = FALSE;
+
+    for (int i = 0; i < 6 && !conflict; i++)
+      for (int j = i + 1; j < 6; j++)
+        if (binds[i].keyval == binds[j].keyval &&
+            binds[i].mods == binds[j].mods) {
+          g_warning("Shortcut conflict: \"%s\" and \"%s\" both resolve to the "
+                    "same key combination",
+                    binds[i].name, binds[j].name);
+          conflict = TRUE;
+          break;
+        }
+  }
 
   win->window = gtk_window_new();
   gtk_window_set_application(GTK_WINDOW(win->window), app);
@@ -145,16 +265,32 @@ AppWindow *app_window_new(GtkApplication *app) {
                      win);
   }
 
-  /* ── outer vertical box ─────────────────────────────────── */
-  outer_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
-  gtk_widget_set_margin_start(outer_box, 12);
-  gtk_widget_set_margin_end(outer_box, 12);
-  gtk_widget_set_margin_top(outer_box, 12);
-  gtk_widget_set_margin_bottom(outer_box, 12);
-  gtk_window_set_child(GTK_WINDOW(win->window), outer_box);
+  /* ── main layout ────────────────────────────────────────── */
+  main_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+  gtk_window_set_child(GTK_WINDOW(win->window), main_box);
+
+  content_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
+  gtk_widget_set_margin_start(content_box, 12);
+  gtk_widget_set_margin_end(content_box, 12);
+  gtk_widget_set_margin_top(content_box, 12);
+  gtk_box_append(GTK_BOX(main_box), content_box);
+  outer_box = content_box;
 
   /* ── row 1: prompt input ────────────────────────────────── */
-  label = gtk_label_new("Prompt");
+  {
+    g_autofree char *prompt_text = NULL;
+    g_autofree char *kb_focus_str = NULL;
+    g_autofree char *kb_human = NULL;
+
+    kb_focus_str = runtime_config_get_string(win->config, "kb_focus_prompt",
+                                             KB_FOCUS_PROMPT);
+    kb_human = accel_to_human(kb_focus_str);
+    prompt_text = g_strdup_printf(
+        "Prompt  <span size='x-small' foreground='#888'>%s to focus</span>",
+        kb_human);
+    label = gtk_label_new(prompt_text);
+    gtk_label_set_use_markup(GTK_LABEL(label), TRUE);
+  }
   gtk_label_set_xalign(GTK_LABEL(label), 0.0f);
   gtk_widget_set_margin_bottom(label, 4);
   gtk_box_append(GTK_BOX(outer_box), label);
@@ -286,41 +422,22 @@ AppWindow *app_window_new(GtkApplication *app) {
     gtk_box_append(GTK_BOX(row), filler);
   }
 
-  win->details_btn = gtk_button_new_with_label("Details...");
-  gtk_widget_set_margin_start(win->details_btn, 8);
-  gtk_widget_set_valign(win->details_btn, GTK_ALIGN_CENTER);
-  g_signal_connect_swapped(win->details_btn, "clicked", G_CALLBACK(on_details),
-                           win);
-  gtk_box_append(GTK_BOX(row), win->details_btn);
+  win->log_btn = gtk_button_new_with_label("Log...");
+  gtk_widget_set_margin_start(win->log_btn, 8);
+  gtk_widget_set_valign(win->log_btn, GTK_ALIGN_CENTER);
+  g_signal_connect_swapped(win->log_btn, "clicked", G_CALLBACK(on_log), win);
+  gtk_box_append(GTK_BOX(row), win->log_btn);
+
+  win->shortcuts_btn = gtk_button_new_with_label("Shortcuts...");
+  gtk_widget_set_margin_start(win->shortcuts_btn, 8);
+  gtk_widget_set_valign(win->shortcuts_btn, GTK_ALIGN_CENTER);
+  g_signal_connect_swapped(win->shortcuts_btn, "clicked",
+                           G_CALLBACK(on_shortcuts), win);
+  gtk_box_append(GTK_BOX(row), win->shortcuts_btn);
 
   gtk_box_append(GTK_BOX(outer_box), row);
 
-  /* ── row 3: keyboard hints ─────────────────────────────── */
-  {
-    g_autofree char *hint;
-    g_autofree char *s_focus = runtime_config_get_string(
-        win->config, "kb_focus_prompt", KB_FOCUS_PROMPT);
-    g_autofree char *s_copy = runtime_config_get_string(
-        win->config, "kb_copy_marked", KB_COPY_MARKED);
-    g_autofree char *s_close =
-        runtime_config_get_string(win->config, "kb_close", KB_CLOSE);
-    g_autofree char *s_quit =
-        runtime_config_get_string(win->config, "kb_quit", KB_QUIT);
-
-    hint = g_strdup_printf(
-        "Enter: submit  ·  Shift+Enter: newline  ·  %s: focus  ·  "
-        "%s: copy  ·  %s: close  ·  %s: quit",
-        s_focus, s_copy, s_close, s_quit);
-    win->hints_label = gtk_label_new(hint);
-    gtk_widget_set_opacity(win->hints_label, 0.4);
-    gtk_widget_set_halign(win->hints_label, GTK_ALIGN_START);
-    gtk_widget_set_margin_top(win->hints_label, 4);
-    gtk_widget_set_margin_bottom(win->hints_label, 4);
-    gtk_widget_add_css_class(win->hints_label, "monospace");
-    gtk_box_append(GTK_BOX(outer_box), win->hints_label);
-  }
-
-  /* ── detached: command preview text (lives in details popup) ── */
+  /* ── detached: command preview text (lives in log popup) ── */
   win->cmd_label = gtk_text_view_new();
   gtk_text_view_set_editable(GTK_TEXT_VIEW(win->cmd_label), FALSE);
   gtk_text_view_set_cursor_visible(GTK_TEXT_VIEW(win->cmd_label), FALSE);
@@ -331,6 +448,8 @@ AppWindow *app_window_new(GtkApplication *app) {
   gtk_widget_set_hexpand(win->cmd_label, TRUE);
   gtk_widget_add_css_class(win->cmd_label, "monospace");
 
+  log_append(win, "session → started");
+
   /* ── row 4: output ──────────────────────────────────────── */
   {
     GtkWidget *out_label;
@@ -339,7 +458,6 @@ AppWindow *app_window_new(GtkApplication *app) {
     gtk_label_set_xalign(GTK_LABEL(out_label), 0.0f);
     gtk_widget_set_margin_top(out_label, 8);
     gtk_widget_set_margin_bottom(out_label, 4);
-    gtk_widget_set_visible(out_label, FALSE);
     gtk_box_append(GTK_BOX(outer_box), out_label);
     win->output_label = out_label;
   }
@@ -393,7 +511,6 @@ AppWindow *app_window_new(GtkApplication *app) {
 
   gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scroll), win->output_view);
   win->output_scroll = scroll;
-  gtk_widget_set_visible(win->output_scroll, FALSE);
   gtk_box_append(GTK_BOX(outer_box), scroll);
 
   /* ── row 5: marked lines label ──────────────────────────── */
@@ -402,7 +519,6 @@ AppWindow *app_window_new(GtkApplication *app) {
   gtk_label_set_xalign(GTK_LABEL(win->marked_label), 0.0f);
   gtk_widget_set_margin_top(win->marked_label, 4);
   gtk_widget_set_margin_bottom(win->marked_label, 4);
-  gtk_widget_set_visible(win->marked_label, FALSE);
   gtk_box_append(GTK_BOX(outer_box), win->marked_label);
 
   /* ── row 6: copy, close, quit ───────────────────────────── */
@@ -424,14 +540,89 @@ AppWindow *app_window_new(GtkApplication *app) {
   g_signal_connect_swapped(win->quit_btn, "clicked", G_CALLBACK(on_quit), win);
   gtk_box_append(GTK_BOX(row), win->quit_btn);
 
-  win->version_label = gtk_label_new("v" VERSION);
-  gtk_widget_set_opacity(win->version_label, 0.5);
-  gtk_widget_set_hexpand(win->version_label, TRUE);
-  gtk_widget_set_halign(win->version_label, GTK_ALIGN_END);
-  gtk_widget_set_valign(win->version_label, GTK_ALIGN_CENTER);
-  gtk_box_append(GTK_BOX(row), win->version_label);
-
   gtk_box_append(GTK_BOX(outer_box), row);
+
+  /* ── row 7: status bar ──────────────────────────────────── */
+  {
+    GtkWidget *outer, *inner, *ver_label;
+
+    outer = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
+    gtk_widget_set_hexpand(outer, TRUE);
+    gtk_widget_add_css_class(outer, "status-bar");
+
+    inner = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
+    gtk_widget_set_margin_start(inner, 12);
+    gtk_widget_set_margin_end(inner, 12);
+    gtk_widget_set_margin_top(inner, 5);
+    gtk_widget_set_margin_bottom(inner, 5);
+    gtk_box_append(GTK_BOX(outer), inner);
+
+    win->status_bar = gtk_label_new("Ready");
+    gtk_label_set_xalign(GTK_LABEL(win->status_bar), 0.0f);
+    gtk_widget_set_hexpand(win->status_bar, TRUE);
+    gtk_box_append(GTK_BOX(inner), win->status_bar);
+
+    ver_label =
+        gtk_label_new("<span size='small' alpha='40%'>v" VERSION "</span>");
+    gtk_label_set_use_markup(GTK_LABEL(ver_label), TRUE);
+    gtk_box_append(GTK_BOX(inner), ver_label);
+
+    gtk_box_append(GTK_BOX(main_box), outer);
+  }
+
+  {
+    g_autofree char *t_copy = accel_to_human(runtime_config_get_string(
+        win->config, "kb_copy_marked", KB_COPY_MARKED));
+    g_autofree char *t_close = accel_to_human(
+        runtime_config_get_string(win->config, "kb_close", KB_CLOSE));
+    g_autofree char *t_quit = accel_to_human(
+        runtime_config_get_string(win->config, "kb_quit", KB_QUIT));
+    g_autofree char *t_log = accel_to_human(
+        runtime_config_get_string(win->config, "kb_log", KB_LOG));
+    g_autofree char *t_shortcuts = accel_to_human(
+        runtime_config_get_string(win->config, "kb_shortcuts", KB_SHORTCUTS));
+    char *tip;
+
+    tip = g_strdup_printf("Copy Marked Lines — %s", t_copy);
+    gtk_widget_set_tooltip_text(win->copy_btn, tip);
+    g_free(tip);
+    tip = g_strdup_printf("Close — %s", t_close);
+    gtk_widget_set_tooltip_text(win->close_btn, tip);
+    g_free(tip);
+    tip = g_strdup_printf("Close & Quit — %s", t_quit);
+    gtk_widget_set_tooltip_text(win->quit_btn, tip);
+    g_free(tip);
+    tip = g_strdup_printf("Log — %s", t_log);
+    gtk_widget_set_tooltip_text(win->log_btn, tip);
+    g_free(tip);
+    tip = g_strdup_printf("Shortcuts — %s", t_shortcuts);
+    gtk_widget_set_tooltip_text(win->shortcuts_btn, tip);
+    g_free(tip);
+
+    tip = g_strdup_printf("Copy marked lines: %s", t_copy);
+    status_bar_on_hover(win->copy_btn, win, tip);
+    g_free(tip);
+    tip = g_strdup_printf("Close window: %s", t_close);
+    status_bar_on_hover(win->close_btn, win, tip);
+    g_free(tip);
+    tip = g_strdup_printf("Close & quit: %s", t_quit);
+    status_bar_on_hover(win->quit_btn, win, tip);
+    g_free(tip);
+    tip = g_strdup_printf("Open session log: %s", t_log);
+    status_bar_on_hover(win->log_btn, win, tip);
+    g_free(tip);
+    tip = g_strdup_printf("Open shortcuts: %s", t_shortcuts);
+    status_bar_on_hover(win->shortcuts_btn, win, tip);
+    g_free(tip);
+  }
+  gtk_widget_set_tooltip_text(win->submit_btn, "Submit — enter / return");
+  status_bar_on_hover(win->submit_btn, win, "Submit prompt: enter / return");
+  status_bar_on_hover(
+      win->prompt_view, win,
+      "Type your prompt.  Enter to submit, Shift+Enter for newline.");
+  status_bar_on_hover(
+      win->output_view, win,
+      "Click gutter to mark lines.  Ctrl+Shift+C to copy marked lines.");
 
   app_window_restore_state(win);
   update_cmd_preview(win);
@@ -484,8 +675,12 @@ void app_window_close_and_quit(AppWindow *win) {
   if (win->cancellable != NULL) {
     g_cancellable_cancel(win->cancellable);
   }
-  if (win->details_popup != NULL)
-    gtk_window_destroy(GTK_WINDOW(win->details_popup));
+  if (win->log_popup != NULL)
+    gtk_window_destroy(GTK_WINDOW(win->log_popup));
+  if (win->log_file != NULL) {
+    fclose(win->log_file);
+    win->log_file = NULL;
+  }
   win->destroyed = TRUE;
   gtk_window_destroy(GTK_WINDOW(win->window));
 }
@@ -504,6 +699,8 @@ void app_window_free(gpointer data) {
   g_free(win->marked_lines_str);
   g_free(win->opencode_bin);
   runtime_config_free(win->config);
+  if (win->log_file != NULL)
+    fclose(win->log_file);
   g_free(win);
 }
 
@@ -521,18 +718,10 @@ static void set_load_state_common(AppWindow *win, gboolean loading) {
 }
 
 static void set_loading_state(AppWindow *win, const char *cmd) {
-  char *label_text;
-
   win->state = STATE_LOADING;
   set_load_state_common(win, TRUE);
 
-  label_text = g_strdup_printf("Running: %s", cmd);
-  set_cmd_text(win, label_text);
-  g_free(label_text);
-
-  gtk_widget_set_visible(win->output_label, FALSE);
-  gtk_widget_set_visible(win->output_scroll, FALSE);
-  gtk_widget_set_visible(win->marked_label, FALSE);
+  log_append(win, "submit → %s", cmd);
 
   gtk_button_set_label(GTK_BUTTON(win->submit_btn), "Running...");
 
@@ -541,55 +730,45 @@ static void set_loading_state(AppWindow *win, const char *cmd) {
 
 static void set_finished_state(AppWindow *win, char *cmd, gint64 elapsed,
                                const char *output) {
-  char *label_text;
   gint64 ms;
+  int lines;
 
   set_load_state_common(win, FALSE);
   win->state = STATE_FINISHED;
 
   ms = elapsed / 1000;
-  label_text =
-      g_strdup_printf("%s\n\nFinished. Took %" G_GINT64_FORMAT "ms.", cmd, ms);
-  set_cmd_text(win, label_text);
-  g_free(label_text);
-  g_free(cmd);
-
   if (output != NULL && output[0] != '\0') {
     GtkTextBuffer *buf;
     buf = gtk_text_view_get_buffer(GTK_TEXT_VIEW(win->output_view));
     gtk_text_buffer_set_text(buf, output, -1);
+    lines = gtk_text_buffer_get_line_count(buf);
     if (!win->defaults_applied) {
       apply_default_marks(win, buf);
       win->defaults_applied = TRUE;
     }
     update_marked_label(win);
     gtk_widget_set_sensitive(win->copy_btn, TRUE);
-    gtk_widget_set_visible(win->output_label, TRUE);
-    gtk_widget_set_visible(win->output_scroll, TRUE);
-    gtk_widget_set_visible(win->marked_label, TRUE);
   } else {
     GtkTextBuffer *buf;
     buf = gtk_text_view_get_buffer(GTK_TEXT_VIEW(win->output_view));
     gtk_text_buffer_set_text(buf, "", -1);
+    lines = 0;
     gtk_widget_set_sensitive(win->copy_btn, FALSE);
-    gtk_widget_set_visible(win->output_label, FALSE);
-    gtk_widget_set_visible(win->output_scroll, FALSE);
-    gtk_widget_set_visible(win->marked_label, FALSE);
   }
+
+  log_append(win, "finished → Took %" G_GINT64_FORMAT "ms. %d lines.", ms,
+             lines);
+  g_free(cmd);
 
   gtk_button_set_label(GTK_BUTTON(win->submit_btn), "Submit");
   update_submit_sensitivity(win);
 }
 
 static void set_canceled_state(AppWindow *win, char *cmd) {
-  char *label_text;
-
   set_load_state_common(win, FALSE);
   win->state = STATE_CANCELED;
 
-  label_text = g_strdup_printf("%s  Cancelled.", cmd);
-  set_cmd_text(win, label_text);
-  g_free(label_text);
+  log_append(win, "cancel → Cancelled.");
   g_free(cmd);
 
   gtk_button_set_label(GTK_BUTTON(win->submit_btn), "Submit");
@@ -598,15 +777,22 @@ static void set_canceled_state(AppWindow *win, char *cmd) {
 
 static void set_errored_state(AppWindow *win, char *cmd,
                               const char *stderr_output) {
-  char *label_text;
   GtkTextBuffer *buf;
+  g_autofree char *err_summary = NULL;
 
   set_load_state_common(win, FALSE);
   win->state = STATE_FINISHED;
 
-  label_text = g_strdup_printf("%s  Errored.", cmd);
-  set_cmd_text(win, label_text);
-  g_free(label_text);
+  if (stderr_output != NULL && stderr_output[0] != '\0') {
+    const char *nl;
+    nl = strchr(stderr_output, '\n');
+    if (nl != NULL && nl - stderr_output < 120)
+      err_summary = g_strndup(stderr_output, nl - stderr_output);
+    else
+      err_summary = g_strndup(stderr_output, 120);
+  }
+  log_append(win, "errored → %s",
+             err_summary != NULL ? err_summary : "unknown error");
   g_free(cmd);
 
   buf = gtk_text_view_get_buffer(GTK_TEXT_VIEW(win->output_view));
@@ -617,12 +803,6 @@ static void set_errored_state(AppWindow *win, char *cmd,
   gtk_widget_set_sensitive(win->copy_btn,
                            stderr_output != NULL && stderr_output[0] != '\0');
   update_marked_label(win);
-  gtk_widget_set_visible(win->output_label,
-                         stderr_output != NULL && stderr_output[0] != '\0');
-  gtk_widget_set_visible(win->output_scroll,
-                         stderr_output != NULL && stderr_output[0] != '\0');
-  gtk_widget_set_visible(win->marked_label,
-                         stderr_output != NULL && stderr_output[0] != '\0');
 
   gtk_button_set_label(GTK_BUTTON(win->submit_btn), "Submit");
   update_submit_sensitivity(win);
@@ -721,26 +901,38 @@ static void command_finished_cb(AppWindow *win, const char *output,
 static void on_cancel(AppWindow *win) {
   if (win->subprocess == NULL)
     return;
+  log_append(win, "cancel → user requested");
   command_cancel(win);
 }
 
 /* ── copy ──────────────────────────────────────────────────────── */
 
-static gboolean flash_restore(gpointer user_data) {
-  AppWindow *win = user_data;
-
-  win->copy_flash_source = 0;
-  update_marked_label(win);
+static gboolean status_pop_cb(gpointer data) {
+  gtk_label_set_text(GTK_LABEL(data), "Ready");
   return G_SOURCE_REMOVE;
+}
+
+static void set_status_text(AppWindow *win, const char *text) {
+  gtk_label_set_text(GTK_LABEL(win->status_bar), text != NULL ? text : "");
 }
 
 static void on_copy(AppWindow *win) {
   char *text;
   GdkClipboard *clipboard;
+  size_t nlines;
+  g_autofree char *msg = NULL;
 
   text = get_marked_text(win);
   clipboard = gdk_display_get_clipboard(gtk_widget_get_display(win->window));
   gdk_clipboard_set_text(clipboard, text);
+
+  nlines = 0;
+  if (text != NULL && text[0] != '\0') {
+    nlines = 1;
+    for (const char *p = text; *p != '\0'; p++)
+      if (*p == '\n')
+        nlines++;
+  }
 
   if (runtime_config_get_bool(win->config, "notify_on_copy", NOTIFY_ON_COPY)) {
     GNotification *n;
@@ -760,10 +952,13 @@ static void on_copy(AppWindow *win) {
     g_object_unref(n);
   }
 
-  gtk_label_set_text(GTK_LABEL(win->marked_label), "Copied!");
-  if (win->copy_flash_source != 0)
-    g_source_remove(win->copy_flash_source);
-  win->copy_flash_source = g_timeout_add(1500, flash_restore, win);
+  msg = g_strdup_printf("%zu %s copied to clipboard", nlines,
+                        nlines == 1 ? "line" : "lines");
+  set_status_text(win, msg);
+  g_timeout_add_seconds(2, status_pop_cb, win->status_bar);
+
+  log_append(win, "copy → %zu chars to clipboard", strlen(text));
+  g_free(text);
 }
 
 /* ── close / quit ──────────────────────────────────────────────── */
@@ -788,25 +983,30 @@ static gboolean on_close_request(GtkWindow *window, gpointer user_data) {
   return TRUE;
 }
 
-/* ── details popup ─────────────────────────────────────────────── */
+/* ── log popup ─────────────────────────────────────────────────── */
 
-static void on_details_close(AppWindow *win) {
+static void on_log_close(AppWindow *win) {
   if (runtime_config_get_bool(win->config, "layer_shell", LAYER_SHELL_ENABLED))
     gtk_layer_set_keyboard_mode(GTK_WINDOW(win->window),
                                 GTK_LAYER_SHELL_KEYBOARD_MODE_EXCLUSIVE);
-  gtk_widget_set_visible(win->details_popup, FALSE);
+  gtk_widget_set_visible(win->log_popup, FALSE);
 }
 
-static void on_details(AppWindow *win) {
-  if (win->details_popup == NULL) {
+static void on_log(AppWindow *win) {
+  if (win->log_popup == NULL) {
     GtkWidget *popup, *box, *scroll, *close_btn;
+    GtkTextBuffer *buf;
+    GtkTextIter end;
+    char timestr[64];
+    time_t now;
+    struct tm *tm;
 
     popup = gtk_window_new();
     gtk_window_set_transient_for(GTK_WINDOW(popup), GTK_WINDOW(win->window));
     gtk_window_set_modal(GTK_WINDOW(popup), FALSE);
     gtk_window_set_destroy_with_parent(GTK_WINDOW(popup), TRUE);
     gtk_window_set_hide_on_close(GTK_WINDOW(popup), TRUE);
-    gtk_window_set_title(GTK_WINDOW(popup), "Command Details");
+    gtk_window_set_title(GTK_WINDOW(popup), "Log");
     gtk_window_set_default_size(GTK_WINDOW(popup), 600, 300);
     gtk_window_set_resizable(GTK_WINDOW(popup), TRUE);
 
@@ -824,21 +1024,203 @@ static void on_details(AppWindow *win) {
     gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scroll), win->cmd_label);
     gtk_box_append(GTK_BOX(box), scroll);
 
+    now = time(NULL);
+    tm = localtime(&now);
+    strftime(timestr, sizeof(timestr), "%Y-%m-%d %H:%M:%S", tm);
+    buf = gtk_text_view_get_buffer(GTK_TEXT_VIEW(win->cmd_label));
+    gtk_text_buffer_get_end_iter(buf, &end);
+    {
+      g_autofree char *header =
+          g_strdup_printf("Promptr v" VERSION " — session %s\n", timestr);
+      gtk_text_buffer_insert(buf, &end, header, -1);
+    }
+
     close_btn = gtk_button_new_with_label("Close");
     gtk_widget_set_halign(close_btn, GTK_ALIGN_END);
     gtk_widget_set_margin_top(close_btn, 4);
-    g_signal_connect_swapped(close_btn, "clicked", G_CALLBACK(on_details_close),
+    g_signal_connect_swapped(close_btn, "clicked", G_CALLBACK(on_log_close),
                              win);
     gtk_box_append(GTK_BOX(box), close_btn);
 
-    win->details_popup = popup;
+    {
+      struct PopupEscCtx *ctx;
+
+      ctx = g_new(struct PopupEscCtx, 1);
+      ctx->win = win;
+      ctx->close_fn = on_log_close;
+
+      GtkEventController *k = gtk_event_controller_key_new();
+      g_signal_connect_data(k, "key-pressed", G_CALLBACK(on_popup_esc), ctx,
+                            esc_ctx_free, 0);
+      gtk_widget_add_controller(popup, k);
+    }
+
+    win->log_popup = popup;
   }
 
   if (runtime_config_get_bool(win->config, "layer_shell", LAYER_SHELL_ENABLED))
     gtk_layer_set_keyboard_mode(GTK_WINDOW(win->window),
                                 GTK_LAYER_SHELL_KEYBOARD_MODE_ON_DEMAND);
 
-  gtk_window_present(GTK_WINDOW(win->details_popup));
+  gtk_window_present(GTK_WINDOW(win->log_popup));
+}
+
+/* ── shortcuts popup ────────────────────────────────────────────── */
+
+static void on_shortcuts_close(AppWindow *win) {
+  if (runtime_config_get_bool(win->config, "layer_shell", LAYER_SHELL_ENABLED))
+    gtk_layer_set_keyboard_mode(GTK_WINDOW(win->window),
+                                GTK_LAYER_SHELL_KEYBOARD_MODE_EXCLUSIVE);
+  gtk_widget_set_visible(win->shortcuts_popup, FALSE);
+}
+
+static void on_shortcuts(AppWindow *win) {
+  if (win->shortcuts_popup == NULL) {
+    GtkWidget *popup, *box, *scroll, *grid, *close_btn;
+
+    popup = gtk_window_new();
+    gtk_window_set_transient_for(GTK_WINDOW(popup), GTK_WINDOW(win->window));
+    gtk_window_set_modal(GTK_WINDOW(popup), FALSE);
+    gtk_window_set_destroy_with_parent(GTK_WINDOW(popup), TRUE);
+    gtk_window_set_hide_on_close(GTK_WINDOW(popup), TRUE);
+    gtk_window_set_title(GTK_WINDOW(popup), "Keyboard Shortcuts");
+    gtk_window_set_default_size(GTK_WINDOW(popup), 460, 360);
+    gtk_window_set_resizable(GTK_WINDOW(popup), TRUE);
+
+    box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
+    gtk_widget_set_margin_start(box, 12);
+    gtk_widget_set_margin_end(box, 12);
+    gtk_widget_set_margin_top(box, 12);
+    gtk_widget_set_margin_bottom(box, 12);
+    gtk_window_set_child(GTK_WINDOW(popup), box);
+
+    scroll = gtk_scrolled_window_new();
+    gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scroll),
+                                   GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
+    gtk_widget_set_vexpand(scroll, TRUE);
+
+    grid = gtk_grid_new();
+    gtk_grid_set_column_spacing(GTK_GRID(grid), 12);
+    gtk_grid_set_row_spacing(GTK_GRID(grid), 0);
+    gtk_grid_set_column_homogeneous(GTK_GRID(grid), FALSE);
+    gtk_widget_set_hexpand(grid, TRUE);
+    gtk_widget_add_css_class(grid, "shortcuts-grid");
+
+    {
+      GtkWidget *c0, *c1;
+
+      c0 = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
+      gtk_widget_set_hexpand(c0, TRUE);
+      gtk_widget_add_css_class(c0, "shortcuts-header");
+      gtk_widget_add_css_class(c0, "shortcuts-cell");
+      {
+        GtkWidget *l = gtk_label_new("Shortcut");
+        gtk_widget_set_halign(l, GTK_ALIGN_START);
+        gtk_widget_set_margin_start(l, 12);
+        gtk_widget_set_margin_end(l, 12);
+        gtk_widget_set_margin_top(l, 14);
+        gtk_widget_set_margin_bottom(l, 14);
+        gtk_box_append(GTK_BOX(c0), l);
+      }
+      gtk_grid_attach(GTK_GRID(grid), c0, 0, 0, 1, 1);
+
+      c1 = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
+      gtk_widget_set_hexpand(c1, TRUE);
+      gtk_widget_add_css_class(c1, "shortcuts-header");
+      gtk_widget_add_css_class(c1, "shortcuts-cell");
+      gtk_widget_add_css_class(c1, "shortcuts-cell-last");
+      {
+        GtkWidget *l = gtk_label_new("Description");
+        gtk_widget_set_halign(l, GTK_ALIGN_START);
+        gtk_widget_set_margin_start(l, 12);
+        gtk_widget_set_margin_end(l, 12);
+        gtk_widget_set_margin_top(l, 14);
+        gtk_widget_set_margin_bottom(l, 14);
+        gtk_box_append(GTK_BOX(c1), l);
+      }
+      gtk_grid_attach(GTK_GRID(grid), c1, 1, 0, 1, 1);
+    }
+
+    struct {
+      const char *shortcut;
+      const char *desc;
+    } rows[] = {
+        {NULL, "Focus prompt input"}, {NULL, "Copy marked lines"},
+        {NULL, "Close window"},       {NULL, "Close & quit"},
+        {NULL, "Open session log"},   {NULL, "Open this shortcuts window"},
+        {NULL, "Submit prompt"},      {NULL, "Newline in prompt"},
+        {NULL, "Hide window"},
+    };
+    const char *hardcoded_shortcuts[] = {
+        NULL,          NULL,  NULL, NULL, NULL, NULL, "enter / return",
+        "shift+enter", "esc",
+    };
+
+    int n_config = 6;
+
+    rows[0].shortcut = accel_to_human(runtime_config_get_string(
+        win->config, "kb_focus_prompt", KB_FOCUS_PROMPT));
+    rows[1].shortcut = accel_to_human(runtime_config_get_string(
+        win->config, "kb_copy_marked", KB_COPY_MARKED));
+    rows[2].shortcut = accel_to_human(
+        runtime_config_get_string(win->config, "kb_close", KB_CLOSE));
+    rows[3].shortcut = accel_to_human(
+        runtime_config_get_string(win->config, "kb_quit", KB_QUIT));
+    rows[4].shortcut = accel_to_human(
+        runtime_config_get_string(win->config, "kb_log", KB_LOG));
+    rows[5].shortcut = accel_to_human(
+        runtime_config_get_string(win->config, "kb_shortcuts", KB_SHORTCUTS));
+
+    for (int i = n_config; i < (int)G_N_ELEMENTS(rows); i++)
+      rows[i].shortcut = hardcoded_shortcuts[i];
+
+    for (int i = 0; i < (int)G_N_ELEMENTS(rows); i++) {
+      GtkWidget *k, *d;
+      const char *row_class;
+      int row = i + 1;
+
+      row_class = (i % 2 == 0) ? NULL : "shortcuts-row-even";
+      k = cell_box(kbd_label(rows[i].shortcut), row_class, FALSE);
+      d = cell_box(desc_label(rows[i].desc), row_class, TRUE);
+      gtk_grid_attach(GTK_GRID(grid), k, 0, row, 1, 1);
+      gtk_grid_attach(GTK_GRID(grid), d, 1, row, 1, 1);
+    }
+
+    for (int i = 0; i < (int)G_N_ELEMENTS(rows); i++)
+      if (hardcoded_shortcuts[i] == NULL)
+        g_free((char *)rows[i].shortcut);
+
+    gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scroll), grid);
+    gtk_box_append(GTK_BOX(box), scroll);
+
+    close_btn = gtk_button_new_with_label("Close");
+    gtk_widget_set_halign(close_btn, GTK_ALIGN_END);
+    gtk_widget_set_margin_top(close_btn, 4);
+    g_signal_connect_swapped(close_btn, "clicked",
+                             G_CALLBACK(on_shortcuts_close), win);
+    gtk_box_append(GTK_BOX(box), close_btn);
+
+    {
+      struct PopupEscCtx *ctx;
+
+      ctx = g_new(struct PopupEscCtx, 1);
+      ctx->win = win;
+      ctx->close_fn = on_shortcuts_close;
+
+      GtkEventController *k = gtk_event_controller_key_new();
+      g_signal_connect_data(k, "key-pressed", G_CALLBACK(on_popup_esc), ctx,
+                            esc_ctx_free, 0);
+      gtk_widget_add_controller(popup, k);
+    }
+
+    win->shortcuts_popup = popup;
+  }
+
+  if (runtime_config_get_bool(win->config, "layer_shell", LAYER_SHELL_ENABLED))
+    gtk_layer_set_keyboard_mode(GTK_WINDOW(win->window),
+                                GTK_LAYER_SHELL_KEYBOARD_MODE_ON_DEMAND);
+
+  gtk_window_present(GTK_WINDOW(win->shortcuts_popup));
 }
 
 /* ── key handling ──────────────────────────────────────────────── */
@@ -882,8 +1264,13 @@ static gboolean on_window_key_pressed(GtkEventControllerKey *controller,
   mods = state &
          (GDK_SHIFT_MASK | GDK_CONTROL_MASK | GDK_ALT_MASK | GDK_SUPER_MASK);
 
-  if (keyval == win->kb_close_keyval && mods == win->kb_close_mods) {
-    on_close(win);
+  if (keyval == win->kb_log_keyval && mods == win->kb_log_mods) {
+    on_log(win);
+    return GDK_EVENT_STOP;
+  }
+
+  if (keyval == win->kb_shortcuts_keyval && mods == win->kb_shortcuts_mods) {
+    on_shortcuts(win);
     return GDK_EVENT_STOP;
   }
 
@@ -892,17 +1279,22 @@ static gboolean on_window_key_pressed(GtkEventControllerKey *controller,
     return GDK_EVENT_STOP;
   }
 
-  if (keyval == win->kb_focus_keyval && mods == win->kb_focus_mods) {
-    gtk_widget_grab_focus(win->prompt_view);
-    buf = gtk_text_view_get_buffer(GTK_TEXT_VIEW(win->prompt_view));
-    gtk_text_buffer_get_bounds(buf, &start, &end);
-    gtk_text_buffer_select_range(buf, &start, &end);
+  if (keyval == win->kb_close_keyval && mods == win->kb_close_mods) {
+    on_close(win);
     return GDK_EVENT_STOP;
   }
 
   if (keyval == win->kb_copy_keyval && mods == win->kb_copy_mods) {
     if (gtk_widget_is_sensitive(win->copy_btn))
       on_copy(win);
+    return GDK_EVENT_STOP;
+  }
+
+  if (keyval == win->kb_focus_keyval && mods == win->kb_focus_mods) {
+    gtk_widget_grab_focus(win->prompt_view);
+    buf = gtk_text_view_get_buffer(GTK_TEXT_VIEW(win->prompt_view));
+    gtk_text_buffer_get_bounds(buf, &start, &end);
+    gtk_text_buffer_select_range(buf, &start, &end);
     return GDK_EVENT_STOP;
   }
 
@@ -987,15 +1379,171 @@ static char *get_selected_text(GtkWidget *dropdown) {
   return result;
 }
 
+static char *accel_to_human(const char *accel) {
+  GString *out;
+  const char *p;
+
+  out = g_string_new(NULL);
+  p = accel != NULL ? accel : "";
+
+  while (*p != '\0') {
+    if (*p == '<') {
+      p++;
+      if (g_ascii_strncasecmp(p, "Control>", 8) == 0) {
+        g_string_append(out, "ctrl+");
+        p += 8;
+      } else if (g_ascii_strncasecmp(p, "Shift>", 6) == 0) {
+        g_string_append(out, "shift+");
+        p += 6;
+      } else if (g_ascii_strncasecmp(p, "Alt>", 4) == 0) {
+        g_string_append(out, "alt+");
+        p += 4;
+      } else if (g_ascii_strncasecmp(p, "Super>", 6) == 0) {
+        g_string_append(out, "super+");
+        p += 6;
+      } else {
+        while (*p != '\0' && *p != '>')
+          g_string_append_c(out, g_ascii_tolower(*p++));
+        if (*p == '>')
+          p++;
+        g_string_append_c(out, '+');
+      }
+    } else {
+      g_string_append_c(out, g_ascii_tolower(*p));
+      p++;
+    }
+  }
+
+  if (out->len > 0 && out->str[out->len - 1] == '+')
+    g_string_truncate(out, out->len - 1);
+
+  return g_string_free(out, FALSE);
+}
+
+struct HoverCtx {
+  AppWindow *win;
+  char *text;
+};
+
+static void hover_enter_cb(GtkEventControllerMotion *ctrl, double x, double y,
+                           gpointer data) {
+  struct HoverCtx *ctx = data;
+  (void)ctrl;
+  (void)x;
+  (void)y;
+  gtk_label_set_text(GTK_LABEL(ctx->win->status_bar), ctx->text);
+}
+
+static void hover_leave_cb(GtkEventControllerMotion *ctrl, gpointer data) {
+  AppWindow *win = data;
+  (void)ctrl;
+  gtk_label_set_text(GTK_LABEL(win->status_bar), "Ready");
+}
+
+static void hover_ctx_free(gpointer data, GClosure *closure) {
+  struct HoverCtx *ctx = data;
+  (void)closure;
+  g_free(ctx->text);
+  g_free(ctx);
+}
+
+static void status_bar_on_hover(GtkWidget *widget, AppWindow *win,
+                                const char *text) {
+  GtkEventController *motion;
+  struct HoverCtx *ctx;
+
+  ctx = g_new(struct HoverCtx, 1);
+  ctx->win = win;
+  ctx->text = g_strdup(text);
+
+  motion = gtk_event_controller_motion_new();
+  g_signal_connect_data(motion, "enter", G_CALLBACK(hover_enter_cb), ctx,
+                        (GClosureNotify)hover_ctx_free, 0);
+  g_signal_connect(motion, "leave", G_CALLBACK(hover_leave_cb), win);
+
+  gtk_widget_add_controller(widget, motion);
+}
+
 static void set_prompt_focused(AppWindow *win) {
   gtk_widget_grab_focus(win->prompt_view);
 }
 
-static void set_cmd_text(AppWindow *win, const char *text) {
+static GtkWidget *kbd_label(const char *text) {
+  GtkWidget *l;
+
+  l = gtk_label_new(text);
+  gtk_widget_add_css_class(l, "kbd");
+  gtk_widget_set_halign(l, GTK_ALIGN_START);
+  gtk_widget_set_valign(l, GTK_ALIGN_CENTER);
+  return l;
+}
+
+static GtkWidget *desc_label(const char *text) {
+  GtkWidget *l;
+
+  l = gtk_label_new(text);
+  gtk_widget_set_halign(l, GTK_ALIGN_START);
+  gtk_widget_set_valign(l, GTK_ALIGN_CENTER);
+  gtk_label_set_xalign(GTK_LABEL(l), 0.0f);
+  return l;
+}
+
+static GtkWidget *cell_box(GtkWidget *child, const char *row_class,
+                           gboolean last_col) {
+  GtkWidget *box;
+
+  gtk_widget_set_margin_start(child, 12);
+  gtk_widget_set_margin_end(child, 12);
+  gtk_widget_set_margin_top(child, 8);
+  gtk_widget_set_margin_bottom(child, 8);
+
+  box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
+  gtk_widget_set_hexpand(box, TRUE);
+  gtk_widget_add_css_class(box, "shortcuts-cell");
+  if (last_col)
+    gtk_widget_add_css_class(box, "shortcuts-cell-last");
+  if (row_class != NULL)
+    gtk_widget_add_css_class(box, row_class);
+  gtk_box_append(GTK_BOX(box), child);
+  return box;
+}
+
+static void log_append(AppWindow *win, const char *fmt, ...) {
   GtkTextBuffer *buf;
+  GtkTextIter end;
+  GString *line;
+  char timestr[64];
+  time_t now;
+  struct tm *tm;
+  va_list args;
+  g_autofree char *msg = NULL;
+
+  now = time(NULL);
+  tm = localtime(&now);
+  strftime(timestr, sizeof(timestr), "[%H:%M:%S] ", tm);
+
+  va_start(args, fmt);
+  msg = g_strdup_vprintf(fmt, args);
+  va_end(args);
+
+  line = g_string_new(timestr);
+  g_string_append(line, msg);
+  g_string_append_c(line, '\n');
 
   buf = gtk_text_view_get_buffer(GTK_TEXT_VIEW(win->cmd_label));
-  gtk_text_buffer_set_text(buf, text != NULL ? text : "", -1);
+  gtk_text_buffer_get_end_iter(buf, &end);
+  gtk_text_buffer_insert(buf, &end, line->str, -1);
+
+  gtk_text_view_scroll_to_mark(GTK_TEXT_VIEW(win->cmd_label),
+                               gtk_text_buffer_get_insert(buf), 0.0, FALSE, 0.0,
+                               0.0);
+
+  if (win->log_file != NULL) {
+    fputs(line->str, win->log_file);
+    fflush(win->log_file);
+  }
+
+  g_string_free(line, TRUE);
 }
 
 static gboolean hex_to_rgba(const char *hex, GdkRGBA *out) {
@@ -1065,7 +1613,6 @@ static void update_cmd_preview(AppWindow *win) {
   else
     g_string_append(display, " <query>");
 
-  set_cmd_text(win, display->str);
   g_string_free(display, TRUE);
   g_free(query);
   g_free(agent);
@@ -1306,9 +1853,37 @@ static void load_css(int prompt_font_size, int output_font_size) {
 
   css = g_string_new(
       "textview.monospace, label.monospace { font-family: monospace; }"
+      ".kbd {"
+      "  background-color: mix(@theme_bg_color, @theme_fg_color, 0.06);"
+      "  border: 1px solid mix(@theme_bg_color, @theme_fg_color, 0.15);"
+      "  border-radius: 4px;"
+      "  padding: 2px 7px;"
+      "  font-family: monospace;"
+      "  font-size: 0.92em;"
+      "}"
       "textview gutter {"
-      "  background-color: @theme_bg_color;"
+      "  background-color: mix(@theme_bg_color, @theme_fg_color, 0.05);"
       "  color: @theme_fg_color;"
+      "}"
+      ".status-bar {"
+      "  background-color: mix(@theme_bg_color, @theme_fg_color, 0.05);"
+      "}"
+      ".shortcuts-grid {"
+      "  border: 1px solid @borders;"
+      "}"
+      ".shortcuts-header {"
+      "  background-color: alpha(currentColor, 0.06);"
+      "  font-weight: bold;"
+      "}"
+      ".shortcuts-cell {"
+      "  border-bottom: 1px solid @borders;"
+      "  border-right: 1px solid @borders;"
+      "}"
+      ".shortcuts-cell-last {"
+      "  border-right: none;"
+      "}"
+      ".shortcuts-row-even {"
+      "  background-color: alpha(currentColor, 0.03);"
       "}"
       "dropdown button arrow {"
       "  -gtk-icon-source: -gtk-icontheme(\"pan-down-symbolic\");"
