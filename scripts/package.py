@@ -53,7 +53,7 @@ def build_deb():
 Package: promptr
 Version: {VERSION}
 Architecture: {deb_arch}
-Maintainer: toxdes <toxdes@proton.me>
+Maintainer: toxdes <hi@toxdes.com>
 Section: utils
 Priority: optional
 Depends: libgtk-4-1, libgtksourceview-5-0, libgtk4-layer-shell0

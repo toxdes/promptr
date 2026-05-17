@@ -16,3 +16,4 @@ dist/
 Thumbs.db
 prompt.md
 promptr2
+__pycache__/
