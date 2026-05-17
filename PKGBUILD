@@ -1,6 +1,5 @@
 # Maintainer: toxdes <toxdes@proton.me>
 pkgname=promptr-git
-pkgver=r34.efe2129
 pkgrel=1
 pkgdesc="GTK4 overlay prompt for opencode"
 arch=('x86_64' 'aarch64')
@@ -11,9 +10,14 @@ makedepends=('git' 'gcc' 'make' 'pkg-config')
 source=("git+${url}.git")
 sha256sums=('SKIP')
 
+pkgver() {
+  cd "$srcdir/promptr"
+  git describe --long --tags | sed 's/^v//;s/-/./g'
+}
+
 build() {
   cd "$srcdir/promptr"
-  make
+  make BUILD=release
 }
 
 package() {
