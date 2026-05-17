@@ -2,9 +2,9 @@
 <p align="center">
   <img width="585" height="422" alt="image" src="https://github.com/user-attachments/assets/f3b0e059-9a01-42e5-9cde-cb901a60fabc" />
 </p>
+
 A GTK4 overlay application that runs `opencode` commands through a
-resizable window. Uses layer-shell on wlroots compositors (Sway,
-Hyprland, River) and works on X11 as a regular window.
+resizable window. Supports `layer-shell` on wlroots compositors. 
 
 ## Contents
 
