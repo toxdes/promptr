@@ -2,7 +2,10 @@
 """Build promptr binaries and packages for all platforms using Docker buildx.
 
 Usage:
-    python3 build-all.py
+    python3 build-all.py [--include-appimage]
+
+Options:
+    --include-appimage   Also build .AppImage (adds ~100 MB per arch).
 
 Prerequisites:
     - Docker with buildx support (docker buildx create --use)
@@ -29,6 +32,8 @@ def run(cmd, **kwargs):
 
 
 def main():
+    include_appimage = "--include-appimage" in sys.argv
+
     # Clean output
     if DIST.exists():
         shutil.rmtree(DIST)
@@ -48,10 +53,15 @@ def main():
         capture_output=True)
 
     # Build for all platforms
-    print("\nBuilding for %s ...\n" % PLATFORMS.replace(",", ", "))
-    run("docker buildx build"
+    build_args = (
         " --platform " + PLATFORMS +
         " --build-arg BUILD=release"
+    )
+    if include_appimage:
+        build_args += " --build-arg INCLUDE_APPIMAGE=1"
+
+    print("\nBuilding for %s ...\n" % PLATFORMS.replace(",", ", "))
+    run("docker buildx build" + build_args +
         " --output type=local,dest=" + str(DIST) +
         " --progress=plain"
         " -f Dockerfile .")
