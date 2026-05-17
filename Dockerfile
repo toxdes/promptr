@@ -7,12 +7,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 ARG TARGETARCH
+ARG BUILD=release
 ENV TARGETARCH=${TARGETARCH}
+ENV BUILD=${BUILD}
 
 COPY . /build
 WORKDIR /build
 
-RUN make clean && make
+RUN make clean && make BUILD=${BUILD}
 RUN mkdir -p /output && bash scripts/package.sh
 
 FROM scratch

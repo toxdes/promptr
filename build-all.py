@@ -51,6 +51,7 @@ def main():
     print("\nBuilding for %s ...\n" % PLATFORMS.replace(",", ", "))
     run("docker buildx build"
         " --platform " + PLATFORMS +
+        " --build-arg BUILD=release"
         " --output type=local,dest=" + str(DIST) +
         " --progress=plain"
         " -f Dockerfile .")

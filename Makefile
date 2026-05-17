@@ -9,13 +9,25 @@ LSH_LIBS    := $(shell $(PKG_CONF) --libs $(LSH_PKG))
 SV_CFLAGS   := $(shell $(PKG_CONF) --cflags gtksourceview-5 | sed 's/-I/-isystem /g')
 SV_LIBS     := $(shell $(PKG_CONF) --libs gtksourceview-5)
 
-VERSION := $(shell cat VERSION)
+BUILD ?= debug
 
-CFLAGS  := -std=c11 -pedantic -Wall -Wextra -Werror -O2 -I. $(GTK_CFLAGS) $(LSH_CFLAGS) $(SV_CFLAGS) -DVERSION=\"$(VERSION)\"
+ifeq ($(BUILD),debug)
+  OPT_FLAGS  := -Og -ggdb3
+  WARN_FLAGS := -Wall -Wextra -pedantic
+  VER_SUFFIX := -debug
+else
+  OPT_FLAGS  := -O2
+  WARN_FLAGS := -Wall -Wextra -Werror -pedantic
+  VER_SUFFIX :=
+endif
+
+VERSION := $(shell cat VERSION)$(VER_SUFFIX)
+
+CFLAGS  := -std=c11 $(WARN_FLAGS) $(OPT_FLAGS) -I. $(GTK_CFLAGS) $(LSH_CFLAGS) $(SV_CFLAGS) -DVERSION=\"$(VERSION)\"
 LDFLAGS := $(GTK_LIBS) $(LSH_LIBS) $(SV_LIBS)
 
 SRCDIR   := src
-BUILDDIR := build
+BUILDDIR := build/$(BUILD)
 TARGET   := promptr
 
 PREFIX ?= /usr/local
@@ -40,7 +52,7 @@ $(BUILDDIR):
 -include $(DEPS)
 
 clean:
-	rm -rf $(BUILDDIR) $(TARGET)
+	rm -rf build dist $(TARGET)
 
 install: $(TARGET)
 	install -D -m755 $(TARGET) $(DESTDIR)$(BINDIR)/$(TARGET)
@@ -50,4 +62,10 @@ install: $(TARGET)
 uninstall:
 	rm -f $(DESTDIR)$(BINDIR)/$(TARGET)
 
-.PHONY: clean install uninstall
+.PHONY: clean install uninstall debug release
+
+debug:
+	$(MAKE) BUILD=debug
+
+release:
+	$(MAKE) BUILD=release

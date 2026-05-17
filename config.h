@@ -18,7 +18,8 @@
  */
 #define KB_FOCUS_PROMPT       "<Control>k"
 #define KB_COPY_MARKED        "<Control><Shift>c"
-#define KB_QUIT               "<Control>q"
+#define KB_CLOSE              "<Control>q"
+#define KB_QUIT               "<Control><Shift>q"
 
 /* Layer-shell overlay on wlroots compositors (0 or 1) */
 #define LAYER_SHELL_ENABLED   0
@@ -42,6 +43,13 @@
 
 /* Window decorations when layer-shell is disabled (0 or 1) */
 #define DECORATED_DEFAULT        1
+
+/* Font sizes in pt for prompt and output textviews (0 = system default) */
+#define PROMPT_FONT_SIZE_DEFAULT 0
+#define OUTPUT_FONT_SIZE_DEFAULT 0
+
+/* Command section expanded by default (0 or 1) */
+#define COMMAND_EXPANDED_DEFAULT 0
 
 /* Hex color for marked-line gutter indicator */
 #define MARK_BG_COLOR            "#33cc7f"

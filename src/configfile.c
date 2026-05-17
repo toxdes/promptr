@@ -213,6 +213,7 @@ static const ConfigDefault CONFIG_DEFAULTS[] = {
     {"kb_focus_prompt", KB_FOCUS_PROMPT,
      "# Keyboard shortcuts (GTK accelerator format)"},
     {"kb_copy_marked", KB_COPY_MARKED, NULL},
+    {"kb_close", KB_CLOSE, NULL},
     {"kb_quit", KB_QUIT, NULL},
     {"opencode_path", OPENCODE_PATH, "# Path to the opencode binary"},
     {"agent_options", DEFAULT_AGENT_OPTIONS,
@@ -223,6 +224,12 @@ static const ConfigDefault CONFIG_DEFAULTS[] = {
      "# Default marked lines on output (1-based, comma-separated, 0=all)"},
     {"decorated", G_STRINGIFY(DECORATED_DEFAULT),
      "# Window decorations when layer-shell is disabled (0 or 1)"},
+    {"command_expanded", G_STRINGIFY(COMMAND_EXPANDED_DEFAULT),
+     "# Command section expanded by default (0 or 1)"},
+    {"prompt_font_size", G_STRINGIFY(PROMPT_FONT_SIZE_DEFAULT),
+     "# Font size in pt for prompt text (0 = system default)"},
+    {"output_font_size", G_STRINGIFY(OUTPUT_FONT_SIZE_DEFAULT),
+     "# Font size in pt for output text (0 = system default)"},
     {NULL, NULL, NULL}};
 
 static void migrate_config(const char *path, GKeyFile *kf) {
