@@ -36,4 +36,4 @@ model_options=opencode-go/deepseek-v4-flash,opencode-go/deepseek-v4-pro,opencode
 marked_lines=0
 
 # Window decorations when layer-shell is disabled (0 or 1)
-decorated=1
+decorated=0

@@ -21,7 +21,7 @@
 #define KB_QUIT               "<Control>q"
 
 /* Layer-shell overlay on wlroots compositors (0 or 1) */
-#define LAYER_SHELL_ENABLED   1
+#define LAYER_SHELL_ENABLED   0
 
 /* Comma-separated options for Agent/Model pickers (first=default) */
 #define DEFAULT_AGENT_OPTIONS "linux_cmd,None"
