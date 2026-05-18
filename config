@@ -49,3 +49,6 @@ prompt_font_size=0
 
 # Font size in pt for output text (0 = system default)
 output_font_size=0
+
+# GSK renderer (cairo=CPU/half-memory, ngl/gl/vulkan=GPU)
+gsk_renderer=cairo

@@ -1,3 +1,4 @@
+#include "config.h"
 #include "window.h"
 #include <gtk/gtk.h>
 #include <gtksourceview/gtksource.h>
@@ -32,6 +33,22 @@ static void on_shutdown(GApplication *app, gpointer user_data) {
 int main(int argc, char *argv[]) {
   GtkApplication *app;
   int status;
+
+  {
+    const char *cfg_dir;
+    g_autofree char *cfg_path = NULL;
+    g_autoptr(GKeyFile) kf = g_key_file_new();
+    g_autofree char *renderer = NULL;
+
+    cfg_dir = g_get_user_config_dir();
+    cfg_path = g_build_filename(cfg_dir, "promptr", "config", NULL);
+    if (g_key_file_load_from_file(kf, cfg_path, G_KEY_FILE_NONE, NULL)) {
+      renderer = g_key_file_get_string(kf, "preferences", "gsk_renderer", NULL);
+    }
+    if (renderer == NULL || renderer[0] == '\0')
+      renderer = g_strdup(GSK_RENDERER_DEFAULT);
+    g_setenv("GSK_RENDERER", renderer, FALSE);
+  }
 
   g_set_prgname("promptr");
   gtk_source_init();

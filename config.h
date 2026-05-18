@@ -56,6 +56,15 @@
 /* Hex color for marked-line gutter indicator */
 #define MARK_BG_COLOR            "#33cc7f"
 
+/*
+ * GSK renderer backend (set before gtk_init, not switchable at runtime):
+ *   cairo  — software (CPU), no GPU allocations, ~half baseline memory
+ *   ngl    — OpenGL (GPU), GTK 4.14+ default, highest memory usage
+ *   gl     — OpenGL (GPU), deprecated in 4.14, aliases to ngl
+ *   vulkan — Vulkan (GPU), similar memory to GL; requires Vulkan driver
+ */
+#define GSK_RENDERER_DEFAULT     "cairo"
+
 #ifndef VERSION
 #define VERSION "unknown"
 #endif

@@ -2,7 +2,7 @@
 Type=Application
 Name=Promptr
 Comment=GTK4 overlay prompt for opencode
-Exec=promptr
+Exec=env GSK_RENDERER=cairo promptr
 Icon=promptr
 Terminal=false
 Categories=Utility;
