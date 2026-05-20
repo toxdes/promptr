@@ -63,7 +63,7 @@ install: $(TARGET)
 uninstall:
 	rm -f $(DESTDIR)$(BINDIR)/$(TARGET)
 
-.PHONY: clean install uninstall debug release r
+.PHONY: clean install uninstall debug release r config check-config
 
 debug:
 	$(MAKE) BUILD=debug
@@ -73,3 +73,13 @@ release:
 
 r: clean $(TARGET)
 	./$(TARGET)
+
+config: clean $(TARGET)
+	@rm -rf /tmp/promptr-config-check
+	@mkdir -p /tmp/promptr-config-check/.config
+	@printf "Checking generated config against repo template...\n"
+	@XDG_CONFIG_HOME=/tmp/promptr-config-check/.config \
+		timeout 2 ./$(TARGET) >/dev/null 2>&1 || true
+	@diff -u config /tmp/promptr-config-check/.config/promptr/config || \
+		printf "^^^ config template is out of sync with CONFIG_DEFAULTS[]\n"
+	@rm -rf /tmp/promptr-config-check

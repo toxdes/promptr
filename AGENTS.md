@@ -40,7 +40,11 @@
 - Keyboard shortcuts displayed in lowercase: `ctrl+shift+c`, `enter`, `esc`
 - Use `accel_to_human()` to convert GTK accelerator format
 - Status bar shows context-sensitive hints on hover via `status_bar_on_hover()`
-- Config keys must be added to all three places: `config.h`, `configfile.c` `CONFIG_DEFAULTS[]`, and the repo `config` template file
+- Config keys must be added to all three places: `config.h`, `src/configfile.c`
+  `CONFIG_DEFAULTS[]` (with `.comment` matching `config.h`'s comment), and the
+  repo `config` template file. The initial config is generated at runtime from
+  `CONFIG_DEFAULTS[]` — no separate `DEFAULT_CONFIG` string literal exists.
+  Run `make config` to verify alignment.
 
 ## Files of note
 
@@ -52,5 +56,5 @@
 | `src/window.h` | `AppWindow` struct definition |
 | `src/command.c` | Async subprocess execution |
 | `src/state.c` / `state.h` | Model/agent selection persistence |
-| `config` | Reference config template (keep in sync with `config.h` defaults) |
+| `config` | Reference config template (keep in sync with `CONFIG_DEFAULTS[]` output) |
 | `VERSION` | Single-line version string |

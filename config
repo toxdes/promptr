@@ -7,15 +7,15 @@ width=900
 height=700
 
 # Layer-shell overlay on wlroots compositors (0 or 1)
-layer_shell=1
+layer_shell=0
 
 # Desktop notification on copy (0 or 1)
 notify_on_copy=1
 
-# Gutter mark color in hex
+# Hex color for marked-line gutter indicator
 mark_bg_color=#33cc7f
 
-# Keyboard shortcuts (GTK accelerator format)
+# Keyboard shortcuts (GTK accelerator string format, e.g. "<Control>k")
 kb_focus_prompt=<Control>k
 kb_copy_marked=<Control><Shift>c
 kb_close=<Control>q
@@ -28,17 +28,17 @@ kb_cancel=
 # Path to the opencode binary
 opencode_path=opencode
 
-# Agent dropdown options (comma-separated)
+# Agent dropdown options (comma-separated, first=default)
 agent_options=linux_cmd,None
 
-# Model dropdown options (comma-separated)
+# Model dropdown options (comma-separated, first=default)
 model_options=opencode-go/deepseek-v4-flash,opencode-go/deepseek-v4-pro,opencode/big-pickle,opencode/deepseek-v4-flash-free,None
 
-# Default marked lines on output (1-based, comma-separated, 0=all)
-marked_lines=0
+# Default marked lines on output (0=all, -1=none, or comma-separated 1-based)
+marked_lines=1
 
 # Window decorations when layer-shell is disabled (0 or 1)
-decorated=0
+decorated=1
 
 # Command section expanded by default (0 or 1)
 command_expanded=0
@@ -49,5 +49,9 @@ prompt_font_size=0
 # Font size in pt for output text (0 = system default)
 output_font_size=0
 
-# GSK renderer (cairo=CPU/half-memory, ngl/gl/vulkan=GPU)
+# GSK renderer backend (set before gtk_init, not switchable at runtime):
+#   cairo  - software (CPU), no GPU allocations, ~half baseline memory
+#   ngl    - OpenGL (GPU), GTK 4.14+ default, highest memory usage
+#   gl     - OpenGL (GPU), deprecated in 4.14, aliases to ngl
+#   vulkan - Vulkan (GPU), similar memory to GL; requires Vulkan driver
 gsk_renderer=cairo
