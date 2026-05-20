@@ -6,9 +6,6 @@
 width=900
 height=700
 
-# Escape key hides the window (0 or 1)
-escape_hides=1
-
 # Layer-shell overlay on wlroots compositors (0 or 1)
 layer_shell=1
 
@@ -25,6 +22,8 @@ kb_close=<Control>q
 kb_quit=<Control><Shift>q
 kb_log=<Control><Shift>d
 kb_shortcuts=<Control>F1
+kb_submit=<Control>Return
+kb_cancel=
 
 # Path to the opencode binary
 opencode_path=opencode

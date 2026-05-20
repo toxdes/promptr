@@ -10,9 +10,6 @@
 #define DEFAULT_WIDTH         900
 #define DEFAULT_HEIGHT        700
 
-/* Set to 0 to disable Escape-key hide behaviour */
-#define ESCAPE_HIDES_WINDOW   1
-
 /*
  * Keyboard shortcuts (GTK accelerator string format, e.g. "<Control>k").
  */
@@ -22,6 +19,8 @@
 #define KB_QUIT               "<Control><Shift>q"
 #define KB_LOG                "<Control><Shift>d"
 #define KB_SHORTCUTS          "<Control>F1"
+#define KB_SUBMIT             "<Control>Return"
+#define KB_CANCEL             ""
 
 /* Layer-shell overlay on wlroots compositors (0 or 1) */
 #define LAYER_SHELL_ENABLED   0

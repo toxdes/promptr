@@ -63,10 +63,13 @@ install: $(TARGET)
 uninstall:
 	rm -f $(DESTDIR)$(BINDIR)/$(TARGET)
 
-.PHONY: clean install uninstall debug release
+.PHONY: clean install uninstall debug release r
 
 debug:
 	$(MAKE) BUILD=debug
 
 release:
 	$(MAKE) BUILD=release
+
+r: clean $(TARGET)
+	./$(TARGET)

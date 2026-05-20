@@ -9,199 +9,209 @@ struct _RuntimeConfig {
   GKeyFile *kf;
 };
 
-static const char
-    *DEFAULT_CONFIG = "# promptr runtime configuration\n"
-                      "# Each key falls back to the "
-                      "compile-time "
-                      "default if missing.\n"
-                      "\n"
-                      "[" GROUP "]\n"
-                      "# Window size in pixels\n"
-                      "width=" G_STRINGIFY(DEFAULT_WIDTH) "\n"
-                                                          "heig"
-                                                          "ht"
-                                                          "=" G_STRINGIFY(
-                                                              DEFAULT_HEIGHT) "\n"
-                                                                              "\n"
-                                                                              "# Escape key hides the window (0 "
-                                                                              "or 1)\n"
-                                                                              "escape_hides=" G_STRINGIFY(
-                                                                                  ESCAPE_HIDES_WINDOW) "\n"
-                                                                                                       "\n"
-                                                                                                       "# "
-                                                                                                       "Layer-"
-                                                                                                       "shell "
-                                                                                                       "overlay "
-                                                                                                       "on "
-                                                                                                       "wlroots "
-                                                                                                       "compositor"
-                                                                                                       "s (0 or "
-                                                                                                       "1)\n"
-                                                                                                       "layer_"
-                                                                                                       "shell"
-                                                                                                       "=" G_STRINGIFY(LAYER_SHELL_ENABLED) "\n"
-                                                                                                                                            "\n"
-                                                                                                                                            "# Desktop notification "
-                                                                                                                                            "on copy (0 or 1)\n"
-                                                                                                                                            "notify_on_"
-                                                                                                                                            "copy=" G_STRINGIFY(NOTIFY_ON_COPY) "\n"
-                                                                                                                                                                                "\n"
-                                                                                                                                                                                "# "
-                                                                                                                                                                                "Gutte"
-                                                                                                                                                                                "r "
-                                                                                                                                                                                "mark "
-                                                                                                                                                                                "color"
-                                                                                                                                                                                " in "
-                                                                                                                                                                                "hex\n"
-                                                                                                                                                                                "mark_"
-                                                                                                                                                                                "bg_"
-                                                                                                                                                                                "color"
-                                                                                                                                                                                "=" MARK_BG_COLOR
-                                                                                                                                                                                "\n"
-                                                                                                                                                                                "\n"
-                                                                                                                                                                                "# "
-                                                                                                                                                                                "Keybo"
-                                                                                                                                                                                "ard "
-                                                                                                                                                                                "short"
-                                                                                                                                                                                "cuts "
-                                                                                                                                                                                "(GTK "
-                                                                                                                                                                                "accel"
-                                                                                                                                                                                "erato"
-                                                                                                                                                                                "r "
-                                                                                                                                                                                "forma"
-                                                                                                                                                                                "t)\n"
-                                                                                                                                                                                "kb_"
-                                                                                                                                                                                "focus"
-                                                                                                                                                                                "_prom"
-                                                                                                                                                                                "pt"
-                                                                                                                                                                                "=" KB_FOCUS_PROMPT
-                                                                                                                                                                                "\n"
-                                                                                                                                                                                "kb_"
-                                                                                                                                                                                "copy_"
-                                                                                                                                                                                "marke"
-                                                                                                                                                                                "d"
-                                                                                                                                                                                "=" KB_COPY_MARKED
-                                                                                                                                                                                "\n"
-                                                                                                                                                                                "kb_"
-                                                                                                                                                                                "quit"
-                                                                                                                                                                                "=" KB_QUIT
-                                                                                                                                                                                "\n"
-                                                                                                                                                                                "\n"
-                                                                                                                                                                                "# "
-                                                                                                                                                                                "Path "
-                                                                                                                                                                                "to "
-                                                                                                                                                                                "the "
-                                                                                                                                                                                "openc"
-                                                                                                                                                                                "ode "
-                                                                                                                                                                                "binar"
-                                                                                                                                                                                "y\n"
-                                                                                                                                                                                "openc"
-                                                                                                                                                                                "ode_"
-                                                                                                                                                                                "path"
-                                                                                                                                                                                "=" OPENCODE_PATH
-                                                                                                                                                                                "\n"
-                                                                                                                                                                                "\n"
-                                                                                                                                                                                "# "
-                                                                                                                                                                                "Agent"
-                                                                                                                                                                                " drop"
-                                                                                                                                                                                "down "
-                                                                                                                                                                                "optio"
-                                                                                                                                                                                "ns "
-                                                                                                                                                                                "(comm"
-                                                                                                                                                                                "a-"
-                                                                                                                                                                                "separ"
-                                                                                                                                                                                "ated)"
-                                                                                                                                                                                "\n"
-                                                                                                                                                                                "agent"
-                                                                                                                                                                                "_opti"
-                                                                                                                                                                                "ons="
-                                                                                                                                                                                "linux"
-                                                                                                                                                                                "_cmd,"
-                                                                                                                                                                                "None"
-                                                                                                                                                                                "\n"
-                                                                                                                                                                                "\n"
-                                                                                                                                                                                "# "
-                                                                                                                                                                                "Model"
-                                                                                                                                                                                " drop"
-                                                                                                                                                                                "down "
-                                                                                                                                                                                "optio"
-                                                                                                                                                                                "ns "
-                                                                                                                                                                                "(comm"
-                                                                                                                                                                                "a-"
-                                                                                                                                                                                "separ"
-                                                                                                                                                                                "ated)"
-                                                                                                                                                                                "\n"
-                                                                                                                                                                                "model"
-                                                                                                                                                                                "_opti"
-                                                                                                                                                                                "ons="
-                                                                                                                                                                                "openc"
-                                                                                                                                                                                "ode-"
-                                                                                                                                                                                "go/"
-                                                                                                                                                                                "deeps"
-                                                                                                                                                                                "eek-"
-                                                                                                                                                                                "v4-"
-                                                                                                                                                                                "flash"
-                                                                                                                                                                                ","
-                                                                                                                                                                                "openc"
-                                                                                                                                                                                "ode-"
-                                                                                                                                                                                "go/"
-                                                                                                                                                                                "deeps"
-                                                                                                                                                                                "eek-"
-                                                                                                                                                                                "v4-"
-                                                                                                                                                                                "pro,"
-                                                                                                                                                                                "openc"
-                                                                                                                                                                                "ode/"
-                                                                                                                                                                                "big-"
-                                                                                                                                                                                "pickl"
-                                                                                                                                                                                "e,"
-                                                                                                                                                                                "openc"
-                                                                                                                                                                                "ode/"
-                                                                                                                                                                                "deeps"
-                                                                                                                                                                                "eek-"
-                                                                                                                                                                                "v4-"
-                                                                                                                                                                                "flash"
-                                                                                                                                                                                "-free"
-                                                                                                                                                                                ",None"
-                                                                                                                                                                                "\n"
-                                                                                                                                                                                "\n"
-                                                                                                                                                                                "# "
-                                                                                                                                                                                "Defau"
-                                                                                                                                                                                "lt "
-                                                                                                                                                                                "marke"
-                                                                                                                                                                                "d "
-                                                                                                                                                                                "lines"
-                                                                                                                                                                                " on "
-                                                                                                                                                                                "outpu"
-                                                                                                                                                                                "t "
-                                                                                                                                                                                "(1-"
-                                                                                                                                                                                "based"
-                                                                                                                                                                                ", "
-                                                                                                                                                                                "comma"
-                                                                                                                                                                                "-sepa"
-                                                                                                                                                                                "rated"
-                                                                                                                                                                                ", "
-                                                                                                                                                                                "0="
-                                                                                                                                                                                "all)"
-                                                                                                                                                                                "\n"
-                                                                                                                                                                                "marke"
-                                                                                                                                                                                "d_"
-                                                                                                                                                                                "lines"
-                                                                                                                                                                                "=0\n"
-                                                                                                                                                                                "\n"
-                                                                                                                                                                                "# Window decorations when "
-                                                                                                                                                                                "layer-shell is "
-                                                                                                                                                                                "disabled "
-                                                                                                                                                                                "(0 or 1)\n"
-                                                                                                                                                                                "decorated=" G_STRINGIFY(
-                                                                                                                                                                                    DECORATED_DEFAULT) "\n"
-                                                                                                                                                                                                       "\n"
-                                                                                                                                                                                                       "# GSK renderer "
-                                                                                                                                                                                                       "(cairo=CPU/"
-                                                                                                                                                                                                       "half-memory, "
-                                                                                                                                                                                                       "ngl/gl/vulkan"
-                                                                                                                                                                                                       "=GPU)\n"
-                                                                                                                                                                                                       "gsk_renderer=" GSK_RENDERER_DEFAULT
-                                                                                                                                                                                                       "\n";
+static const char *DEFAULT_CONFIG =
+    "# promptr runtime configuration\n"
+    "# Each key falls back to the "
+    "compile-time "
+    "default if missing.\n"
+    "\n"
+    "[" GROUP "]\n"
+    "# Window size in pixels\n"
+    "width=" G_STRINGIFY(
+        DEFAULT_WIDTH) "\n"
+                       "heig"
+                       "ht"
+                       "=" G_STRINGIFY(
+                           DEFAULT_HEIGHT) "\n"
+                                           "\n"
+                                           "# "
+                                           "Layer-"
+                                           "shell "
+                                           "overlay "
+                                           "on "
+                                           "wlroots "
+                                           "compositor"
+                                           "s (0 or "
+                                           "1)\n"
+                                           "layer_"
+                                           "shell"
+                                           "=" G_STRINGIFY(
+                                               LAYER_SHELL_ENABLED) "\n"
+                                                                    "\n"
+                                                                    "# Desktop "
+                                                                    "notificati"
+                                                                    "on "
+                                                                    "on copy "
+                                                                    "(0 or 1)\n"
+                                                                    "notify_on_"
+                                                                    "copy"
+                                                                    "=" G_STRINGIFY(
+                                                                        NOTIFY_ON_COPY) "\n"
+                                                                                        "\n"
+                                                                                        "# "
+                                                                                        "Gutte"
+                                                                                        "r "
+                                                                                        "mark "
+                                                                                        "color"
+                                                                                        " in "
+                                                                                        "hex\n"
+                                                                                        "mark_"
+                                                                                        "bg_"
+                                                                                        "color"
+                                                                                        "=" MARK_BG_COLOR
+                                                                                        "\n"
+                                                                                        "\n"
+                                                                                        "# "
+                                                                                        "Keybo"
+                                                                                        "ard "
+                                                                                        "short"
+                                                                                        "cuts "
+                                                                                        "(GTK "
+                                                                                        "accel"
+                                                                                        "erato"
+                                                                                        "r "
+                                                                                        "forma"
+                                                                                        "t)\n"
+                                                                                        "kb_"
+                                                                                        "focus"
+                                                                                        "_prom"
+                                                                                        "pt"
+                                                                                        "=" KB_FOCUS_PROMPT
+                                                                                        "\n"
+                                                                                        "kb_"
+                                                                                        "copy_"
+                                                                                        "marke"
+                                                                                        "d"
+                                                                                        "=" KB_COPY_MARKED
+                                                                                        "\n"
+                                                                                        "kb_"
+                                                                                        "quit"
+                                                                                        "=" KB_QUIT
+                                                                                        "\n"
+                                                                                        "kb_"
+                                                                                        "submit"
+                                                                                        "=" KB_SUBMIT
+                                                                                        "\n"
+                                                                                        "kb_"
+                                                                                        "cancel"
+                                                                                        "=" KB_CANCEL
+                                                                                        "\n"
+                                                                                        "\n"
+                                                                                        "# "
+                                                                                        "Path "
+                                                                                        "to "
+                                                                                        "the "
+                                                                                        "openc"
+                                                                                        "ode "
+                                                                                        "binar"
+                                                                                        "y\n"
+                                                                                        "openc"
+                                                                                        "ode_"
+                                                                                        "path"
+                                                                                        "=" OPENCODE_PATH
+                                                                                        "\n"
+                                                                                        "\n"
+                                                                                        "# "
+                                                                                        "Agent"
+                                                                                        " drop"
+                                                                                        "down "
+                                                                                        "optio"
+                                                                                        "ns "
+                                                                                        "(comm"
+                                                                                        "a-"
+                                                                                        "separ"
+                                                                                        "ated)"
+                                                                                        "\n"
+                                                                                        "agent"
+                                                                                        "_opti"
+                                                                                        "ons="
+                                                                                        "linux"
+                                                                                        "_cmd,"
+                                                                                        "None"
+                                                                                        "\n"
+                                                                                        "\n"
+                                                                                        "# "
+                                                                                        "Model"
+                                                                                        " drop"
+                                                                                        "down "
+                                                                                        "optio"
+                                                                                        "ns "
+                                                                                        "(comm"
+                                                                                        "a-"
+                                                                                        "separ"
+                                                                                        "ated)"
+                                                                                        "\n"
+                                                                                        "model"
+                                                                                        "_opti"
+                                                                                        "ons="
+                                                                                        "openc"
+                                                                                        "ode-"
+                                                                                        "go/"
+                                                                                        "deeps"
+                                                                                        "eek-"
+                                                                                        "v4-"
+                                                                                        "flash"
+                                                                                        ","
+                                                                                        "openc"
+                                                                                        "ode-"
+                                                                                        "go/"
+                                                                                        "deeps"
+                                                                                        "eek-"
+                                                                                        "v4-"
+                                                                                        "pro,"
+                                                                                        "openc"
+                                                                                        "ode/"
+                                                                                        "big-"
+                                                                                        "pickl"
+                                                                                        "e,"
+                                                                                        "openc"
+                                                                                        "ode/"
+                                                                                        "deeps"
+                                                                                        "eek-"
+                                                                                        "v4-"
+                                                                                        "flash"
+                                                                                        "-free"
+                                                                                        ",None"
+                                                                                        "\n"
+                                                                                        "\n"
+                                                                                        "# "
+                                                                                        "Defau"
+                                                                                        "lt "
+                                                                                        "marke"
+                                                                                        "d "
+                                                                                        "lines"
+                                                                                        " on "
+                                                                                        "outpu"
+                                                                                        "t "
+                                                                                        "(1-"
+                                                                                        "based"
+                                                                                        ", "
+                                                                                        "comma"
+                                                                                        "-sepa"
+                                                                                        "rated"
+                                                                                        ", "
+                                                                                        "0="
+                                                                                        "all)"
+                                                                                        "\n"
+                                                                                        "marke"
+                                                                                        "d_"
+                                                                                        "lines"
+                                                                                        "=0\n"
+                                                                                        "\n"
+                                                                                        "# Window decorations when "
+                                                                                        "layer-shell is "
+                                                                                        "disabled "
+                                                                                        "(0 or 1)\n"
+                                                                                        "decorated=" G_STRINGIFY(
+                                                                                            DECORATED_DEFAULT) "\n"
+                                                                                                               "\n"
+                                                                                                               "# GSK renderer "
+                                                                                                               "(cairo=CPU/"
+                                                                                                               "half-memory, "
+                                                                                                               "ngl/gl/vulkan"
+                                                                                                               "=GPU)\n"
+                                                                                                               "gsk_renderer=" GSK_RENDERER_DEFAULT
+                                                                                                               "\n";
 
 typedef struct {
   const char *key;
@@ -212,8 +222,6 @@ typedef struct {
 static const ConfigDefault CONFIG_DEFAULTS[] = {
     {"width", G_STRINGIFY(DEFAULT_WIDTH), "# Window size in pixels"},
     {"height", G_STRINGIFY(DEFAULT_HEIGHT), NULL},
-    {"escape_hides", G_STRINGIFY(ESCAPE_HIDES_WINDOW),
-     "# Escape key hides the window (0 or 1)"},
     {"layer_shell", G_STRINGIFY(LAYER_SHELL_ENABLED),
      "# Layer-shell overlay on wlroots compositors (0 or 1)"},
     {"notify_on_copy", G_STRINGIFY(NOTIFY_ON_COPY),
@@ -226,6 +234,8 @@ static const ConfigDefault CONFIG_DEFAULTS[] = {
     {"kb_quit", KB_QUIT, NULL},
     {"kb_log", KB_LOG, NULL},
     {"kb_shortcuts", KB_SHORTCUTS, NULL},
+    {"kb_submit", KB_SUBMIT, NULL},
+    {"kb_cancel", KB_CANCEL, NULL},
     {"opencode_path", OPENCODE_PATH, "# Path to the opencode binary"},
     {"agent_options", DEFAULT_AGENT_OPTIONS,
      "# Agent dropdown options (comma-separated)"},
@@ -250,7 +260,12 @@ static void migrate_config(const char *path, GKeyFile *kf) {
   gsize len;
   GString *out;
   gboolean changed = FALSE;
+  gboolean cleaned = FALSE;
   g_autoptr(GError) error = NULL;
+  g_autofree gchar **keys = NULL;
+  gsize n_keys;
+
+  keys = g_key_file_get_keys(kf, GROUP, &n_keys, NULL);
 
   for (int i = 0; CONFIG_DEFAULTS[i].key != NULL; i++) {
     if (!g_key_file_has_key(kf, GROUP, CONFIG_DEFAULTS[i].key, NULL)) {
@@ -259,7 +274,20 @@ static void migrate_config(const char *path, GKeyFile *kf) {
     }
   }
 
-  if (!changed)
+  for (gsize i = 0; keys != NULL && i < n_keys; i++) {
+    gboolean known = FALSE;
+    for (int j = 0; CONFIG_DEFAULTS[j].key != NULL; j++)
+      if (g_strcmp0(keys[i], CONFIG_DEFAULTS[j].key) == 0) {
+        known = TRUE;
+        break;
+      }
+    if (!known) {
+      g_key_file_remove_key(kf, GROUP, keys[i], NULL);
+      cleaned = TRUE;
+    }
+  }
+
+  if (!changed && !cleaned)
     return;
 
   if (!g_file_get_contents(path, &contents, &len, &error)) {
@@ -283,6 +311,42 @@ static void migrate_config(const char *path, GKeyFile *kf) {
       g_key_file_set_value(kf, GROUP, CONFIG_DEFAULTS[i].key,
                            CONFIG_DEFAULTS[i].value);
     }
+  }
+
+  if (cleaned) {
+    g_autofree char **lines;
+    GString *clean;
+    gboolean skip;
+
+    lines = g_strsplit(out->str, "\n", -1);
+    clean = g_string_new(NULL);
+
+    for (int i = 0; lines[i] != NULL; i++) {
+      g_autofree char *stripped = g_strstrip(g_strdup(lines[i]));
+      skip = FALSE;
+
+      for (gsize k = 0; keys != NULL && k < n_keys && !skip; k++) {
+        g_autofree char *prefix = g_strdup_printf("%s=", keys[k]);
+
+        if (g_str_has_prefix(stripped, prefix)) {
+          gboolean known = FALSE;
+
+          for (int j = 0; CONFIG_DEFAULTS[j].key != NULL; j++)
+            if (g_strcmp0(keys[k], CONFIG_DEFAULTS[j].key) == 0) {
+              known = TRUE;
+              break;
+            }
+          if (!known)
+            skip = TRUE;
+        }
+      }
+
+      if (!skip)
+        g_string_append_printf(clean, "%s\n", lines[i]);
+    }
+
+    g_string_free(out, TRUE);
+    out = clean;
   }
 
   g_file_set_contents(path, out->str, -1, NULL);
