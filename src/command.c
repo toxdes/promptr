@@ -102,9 +102,12 @@ static void communicate_cb(GObject *source, GAsyncResult *result,
   success = g_subprocess_communicate_utf8_finish(proc, result, &stdout_str,
                                                  &stderr_str, &error);
 
-  if (success)
+  if (success) {
     g_subprocess_wait(proc, NULL, NULL);
-  exit_code = g_subprocess_get_exit_status(proc);
+    exit_code = g_subprocess_get_exit_status(proc);
+  } else {
+    exit_code = -1;
+  }
 
   destroyed = win->destroyed;
 
