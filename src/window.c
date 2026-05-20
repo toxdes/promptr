@@ -23,6 +23,7 @@ static void on_cancel(AppWindow *win);
 static void on_copy(AppWindow *win);
 static void on_close(AppWindow *win);
 static void on_quit(AppWindow *win);
+static void on_follow_up_toggled(AppWindow *win);
 static void update_submit_sensitivity(AppWindow *win);
 static char *get_trimmed_text(GtkWidget *text_view);
 static char *get_selected_text(GtkWidget *dropdown);
@@ -354,6 +355,23 @@ AppWindow *app_window_new(GtkApplication *app) {
   g_signal_connect(key_ctrl, "key-pressed", G_CALLBACK(on_prompt_key_pressed),
                    win);
 
+  /* ── follow-up row ───────────────────────────────────────── */
+  {
+    GtkWidget *furow;
+
+    furow = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
+    gtk_widget_set_margin_top(furow, 4);
+
+    win->follow_up_check =
+        gtk_check_button_new_with_label("This prompt is a follow up");
+    gtk_widget_set_sensitive(win->follow_up_check, FALSE);
+    g_signal_connect_swapped(win->follow_up_check, "toggled",
+                             G_CALLBACK(on_follow_up_toggled), win);
+    gtk_box_append(GTK_BOX(furow), win->follow_up_check);
+
+    gtk_box_append(GTK_BOX(outer_box), furow);
+  }
+
   /* ── row 2: agent, model, submit ────────────────────────── */
   row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
   gtk_widget_set_margin_top(row, 4);
@@ -626,6 +644,9 @@ AppWindow *app_window_new(GtkApplication *app) {
     gtk_widget_set_tooltip_text(win->cancel_btn, tip);
     g_free(tip);
 
+    gtk_widget_set_tooltip_text(
+        win->follow_up_check, "Continue last session instead of starting new");
+
     tip = g_strdup_printf("Copy marked lines: %s", t_copy);
     status_bar_on_hover(win->copy_btn, win, tip);
     g_free(tip);
@@ -652,6 +673,9 @@ AppWindow *app_window_new(GtkApplication *app) {
     }
     status_bar_on_hover(win->cancel_btn, win, tip);
     g_free(tip);
+
+    status_bar_on_hover(win->follow_up_check, win,
+                        "Submit to continue the previous session");
   }
   status_bar_on_hover(
       win->prompt_view, win,
@@ -734,6 +758,7 @@ void app_window_free(gpointer data) {
   g_free(win->cmd_string);
   g_free(win->marked_lines_str);
   g_free(win->opencode_bin);
+  g_free(win->last_tmpdir);
   runtime_config_free(win->config);
   if (win->log_file != NULL)
     fclose(win->log_file);
@@ -746,6 +771,7 @@ static void set_load_state_common(AppWindow *win, gboolean loading) {
   gtk_widget_set_sensitive(win->prompt_view, !loading);
   gtk_widget_set_sensitive(win->agent_dropdown, !loading);
   gtk_widget_set_sensitive(win->model_dropdown, !loading);
+  gtk_widget_set_sensitive(win->follow_up_check, !loading);
   gtk_widget_set_sensitive(win->submit_btn, !loading);
   gtk_widget_set_visible(win->cancel_btn, loading);
   gtk_widget_set_sensitive(win->cancel_btn, loading);
@@ -757,7 +783,8 @@ static void set_loading_state(AppWindow *win, const char *cmd) {
   win->state = STATE_LOADING;
   set_load_state_common(win, TRUE);
 
-  log_append(win, "submit → %s", cmd);
+  log_append(win, "submit → %s%s", win->follow_up_active ? "[follow-up] " : "",
+             cmd);
 
   gtk_button_set_label(GTK_BUTTON(win->submit_btn), "Running...");
 
@@ -781,20 +808,36 @@ static void set_finished_state(AppWindow *win, char *cmd, gint64 elapsed,
   if (output != NULL && output[0] != '\0') {
     GtkTextBuffer *buf;
     buf = gtk_text_view_get_buffer(GTK_TEXT_VIEW(win->output_view));
-    gtk_text_buffer_set_text(buf, output, -1);
-    lines = gtk_text_buffer_get_line_count(buf);
-    if (!win->defaults_applied) {
-      apply_default_marks(win, buf);
-      win->defaults_applied = TRUE;
+    if (win->follow_up_active) {
+      GtkTextIter start, end;
+      g_autofree char *old_text = NULL;
+      g_autofree char *combined = NULL;
+
+      gtk_text_buffer_get_bounds(buf, &start, &end);
+      old_text = gtk_text_buffer_get_text(buf, &start, &end, FALSE);
+      if (old_text != NULL && old_text[0] != '\0')
+        combined = g_strdup_printf("%s\n---\n%s", output, old_text);
+      else
+        combined = g_strdup(output);
+      gtk_text_buffer_set_text(buf, combined, -1);
+      lines = gtk_text_buffer_get_line_count(buf);
+    } else {
+      gtk_text_buffer_set_text(buf, output, -1);
+      lines = gtk_text_buffer_get_line_count(buf);
+      if (!win->defaults_applied) {
+        apply_default_marks(win, buf);
+        win->defaults_applied = TRUE;
+      }
     }
     update_marked_label(win);
     gtk_widget_set_sensitive(win->copy_btn, TRUE);
   } else {
     GtkTextBuffer *buf;
     buf = gtk_text_view_get_buffer(GTK_TEXT_VIEW(win->output_view));
-    gtk_text_buffer_set_text(buf, "", -1);
-    lines = 0;
-    gtk_widget_set_sensitive(win->copy_btn, FALSE);
+    if (!win->follow_up_active)
+      gtk_text_buffer_set_text(buf, "", -1);
+    lines = gtk_text_buffer_get_line_count(buf);
+    gtk_widget_set_sensitive(win->copy_btn, lines > 0);
   }
 
   log_append(win, "finished → Took %" G_GINT64_FORMAT "ms. %d lines.", ms,
@@ -867,6 +910,7 @@ static void on_submit(AppWindow *win) {
   char *cmd_display;
   GtkTextBuffer *outbuf;
   g_autofree char *tmpdir = NULL;
+  gboolean is_follow_up;
   GError *err = NULL;
 
   if (win->subprocess != NULL)
@@ -881,16 +925,32 @@ static void on_submit(AppWindow *win) {
   agent = get_selected_text(win->agent_dropdown);
   model = get_selected_text(win->model_dropdown);
 
-  {
+  win->follow_up_active = win->follow_up;
+
+  if (win->follow_up_active && win->last_tmpdir != NULL) {
+    is_follow_up = TRUE;
+  } else {
+    is_follow_up = FALSE;
+    win->follow_up_active = FALSE;
+
     tmpdir = g_dir_make_tmp("promptr-XXXXXX", &err);
     if (tmpdir == NULL) {
       g_warning("Failed to create temp dir: %s", err->message);
       g_clear_error(&err);
+    } else {
+      g_free(win->last_tmpdir);
+      win->last_tmpdir = g_strdup(tmpdir);
+      gtk_widget_set_sensitive(win->follow_up_check, TRUE);
     }
   }
 
+  if (is_follow_up)
+    tmpdir = g_strdup(win->last_tmpdir);
+
   display = g_string_new(win->opencode_bin);
   g_string_append(display, " run");
+  if (is_follow_up)
+    g_string_append(display, " --continue");
   if (tmpdir != NULL)
     g_string_append_printf(display, " --dir %s", tmpdir);
   if (model != NULL && g_strcmp0(model, "None") != 0 && model[0] != '\0')
@@ -904,13 +964,14 @@ static void on_submit(AppWindow *win) {
   win->cmd_string = cmd_display;
 
   outbuf = gtk_text_view_get_buffer(GTK_TEXT_VIEW(win->output_view));
-  gtk_text_buffer_set_text(outbuf, "", -1);
+  if (!is_follow_up)
+    gtk_text_buffer_set_text(outbuf, "", -1);
   gtk_widget_set_sensitive(win->copy_btn, FALSE);
 
   command_execute(win, model, agent, query, tmpdir, win->opencode_bin,
-                  command_finished_cb);
+                  is_follow_up, command_finished_cb);
 
-  if (win->subprocess != NULL && tmpdir != NULL)
+  if (win->subprocess != NULL && tmpdir != NULL && !is_follow_up)
     win->temp_dirs = g_slist_prepend(win->temp_dirs, g_strdup(tmpdir));
 
   if (win->subprocess != NULL)
@@ -954,6 +1015,12 @@ static void on_cancel(AppWindow *win) {
     return;
   log_append(win, "cancel → user requested");
   command_cancel(win);
+}
+
+static void on_follow_up_toggled(AppWindow *win) {
+  win->follow_up =
+      gtk_check_button_get_active(GTK_CHECK_BUTTON(win->follow_up_check));
+  update_cmd_preview(win);
 }
 
 static gboolean esc_arm_timeout_cb(gpointer data) {
@@ -1727,7 +1794,11 @@ static void update_cmd_preview(AppWindow *win) {
   model = get_selected_text(win->model_dropdown);
 
   display = g_string_new(win->opencode_bin);
-  g_string_append(display, " run --dir <tmp>");
+  g_string_append(display, " run");
+  if (win->follow_up)
+    g_string_append(display, " --continue --dir <tmp>");
+  else
+    g_string_append(display, " --dir <tmp>");
   if (model != NULL && g_strcmp0(model, "None") != 0 && model[0] != '\0')
     g_string_append_printf(display, " --model %s", model);
   if (agent != NULL && g_strcmp0(agent, "None") != 0 && agent[0] != '\0')

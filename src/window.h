@@ -60,6 +60,11 @@ typedef struct _AppWindow {
   GdkModifierType kb_cancel_mods;
   gboolean esc_armed;
   guint esc_reset_timeout;
+
+  GtkWidget *follow_up_check;
+  gboolean follow_up;
+  gboolean follow_up_active;
+  char *last_tmpdir;
 } AppWindow;
 
 AppWindow *app_window_new(GtkApplication *app);

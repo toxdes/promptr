@@ -10,7 +10,8 @@ typedef void (*CommandCallback)(AppWindow *win, const char *output,
 
 void command_execute(AppWindow *win, const char *model, const char *agent,
                      const char *query, const char *workdir,
-                     const char *opencode_bin, CommandCallback callback);
+                     const char *opencode_bin, gboolean follow_up,
+                     CommandCallback callback);
 
 void command_cancel(AppWindow *win);
 
