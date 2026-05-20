@@ -54,6 +54,12 @@ typedef struct _AppWindow {
   GdkModifierType kb_log_mods;
   guint kb_shortcuts_keyval;
   GdkModifierType kb_shortcuts_mods;
+  guint kb_submit_keyval;
+  GdkModifierType kb_submit_mods;
+  guint kb_cancel_keyval;
+  GdkModifierType kb_cancel_mods;
+  gboolean esc_armed;
+  guint esc_reset_timeout;
 } AppWindow;
 
 AppWindow *app_window_new(GtkApplication *app);

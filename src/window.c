@@ -45,6 +45,9 @@ static gboolean on_prompt_key_pressed(GtkEventControllerKey *controller,
 static gboolean on_window_key_pressed(GtkEventControllerKey *controller,
                                       guint keyval, guint keycode,
                                       GdkModifierType state, AppWindow *win);
+static gboolean esc_arm_timeout_cb(gpointer data);
+static void disarm_escape(AppWindow *win);
+static gboolean status_pop_cb(gpointer data);
 static gboolean on_close_request(GtkWindow *window, gpointer user_data);
 static void on_prompt_changed(GtkTextBuffer *buffer, AppWindow *win);
 static void on_dropdown_changed(GObject *self, GParamSpec *pspec,
@@ -147,7 +150,7 @@ AppWindow *app_window_new(GtkApplication *app) {
     win->log_file = fopen(log_path, "w");
     if (win->log_file != NULL) {
       strftime(timestr, sizeof(timestr), "%Y-%m-%d %H:%M:%S", tm);
-      fprintf(win->log_file, "Promptr v" VERSION " — session %s\n", timestr);
+      fprintf(win->log_file, "Promptr v" VERSION ": session %s\n", timestr);
       fflush(win->log_file);
     }
   }
@@ -174,6 +177,10 @@ AppWindow *app_window_new(GtkApplication *app) {
   gtk_accelerator_parse(kb, &win->kb_shortcuts_keyval, &win->kb_shortcuts_mods);
   kb = runtime_config_get_string(win->config, "kb_log", KB_LOG);
   gtk_accelerator_parse(kb, &win->kb_log_keyval, &win->kb_log_mods);
+  kb = runtime_config_get_string(win->config, "kb_submit", KB_SUBMIT);
+  gtk_accelerator_parse(kb, &win->kb_submit_keyval, &win->kb_submit_mods);
+  kb = runtime_config_get_string(win->config, "kb_cancel", KB_CANCEL);
+  gtk_accelerator_parse(kb, &win->kb_cancel_keyval, &win->kb_cancel_mods);
 
   {
     struct {
@@ -187,6 +194,8 @@ AppWindow *app_window_new(GtkApplication *app) {
         {"quit", win->kb_quit_keyval, win->kb_quit_mods},
         {"log", win->kb_log_keyval, win->kb_log_mods},
         {"shortcuts", win->kb_shortcuts_keyval, win->kb_shortcuts_mods},
+        {"submit", win->kb_submit_keyval, win->kb_submit_mods},
+        {"cancel", win->kb_cancel_keyval, win->kb_cancel_mods},
     };
     gboolean conflict = FALSE;
     int n = (int)G_N_ELEMENTS(binds);
@@ -215,11 +224,14 @@ AppWindow *app_window_new(GtkApplication *app) {
         {"quit", win->kb_quit_keyval, win->kb_quit_mods},
         {"log", win->kb_log_keyval, win->kb_log_mods},
         {"shortcuts", win->kb_shortcuts_keyval, win->kb_shortcuts_mods},
+        {"submit", win->kb_submit_keyval, win->kb_submit_mods},
+        {"cancel", win->kb_cancel_keyval, win->kb_cancel_mods},
     };
     gboolean conflict = FALSE;
+    int n = (int)G_N_ELEMENTS(binds);
 
-    for (int i = 0; i < 6 && !conflict; i++)
-      for (int j = i + 1; j < 6; j++)
+    for (int i = 0; i < n && !conflict; i++)
+      for (int j = i + 1; j < n; j++)
         if (binds[i].keyval == binds[j].keyval &&
             binds[i].mods == binds[j].mods) {
           g_warning("Shortcut conflict: \"%s\" and \"%s\" both resolve to the "
@@ -581,22 +593,37 @@ AppWindow *app_window_new(GtkApplication *app) {
         runtime_config_get_string(win->config, "kb_log", KB_LOG));
     g_autofree char *t_shortcuts = accel_to_human(
         runtime_config_get_string(win->config, "kb_shortcuts", KB_SHORTCUTS));
+    g_autofree char *t_submit = accel_to_human(
+        runtime_config_get_string(win->config, "kb_submit", KB_SUBMIT));
+    g_autofree char *t_cancel = accel_to_human(
+        runtime_config_get_string(win->config, "kb_cancel", KB_CANCEL));
     char *tip;
 
-    tip = g_strdup_printf("Copy Marked Lines — %s", t_copy);
+    tip = g_strdup_printf("Copy Marked Lines: %s", t_copy);
     gtk_widget_set_tooltip_text(win->copy_btn, tip);
     g_free(tip);
-    tip = g_strdup_printf("Close — %s", t_close);
+    tip = g_strdup_printf("Close: %s", t_close);
     gtk_widget_set_tooltip_text(win->close_btn, tip);
     g_free(tip);
-    tip = g_strdup_printf("Close & Quit — %s", t_quit);
+    tip = g_strdup_printf("Close & Quit: %s", t_quit);
     gtk_widget_set_tooltip_text(win->quit_btn, tip);
     g_free(tip);
-    tip = g_strdup_printf("Log — %s", t_log);
+    tip = g_strdup_printf("Log: %s", t_log);
     gtk_widget_set_tooltip_text(win->log_btn, tip);
     g_free(tip);
-    tip = g_strdup_printf("Shortcuts — %s", t_shortcuts);
+    tip = g_strdup_printf("Shortcuts: %s", t_shortcuts);
     gtk_widget_set_tooltip_text(win->shortcuts_btn, tip);
+    g_free(tip);
+
+    tip = g_strdup_printf("Submit: %s", t_submit);
+    gtk_widget_set_tooltip_text(win->submit_btn, tip);
+    g_free(tip);
+    if (strlen(t_cancel) > 0) {
+      tip = g_strdup_printf("Cancel: ESC, ESC / %s", t_cancel);
+    } else {
+      tip = g_strdup("Cancel: ESC, ESC");
+    }
+    gtk_widget_set_tooltip_text(win->cancel_btn, tip);
     g_free(tip);
 
     tip = g_strdup_printf("Copy marked lines: %s", t_copy);
@@ -614,12 +641,21 @@ AppWindow *app_window_new(GtkApplication *app) {
     tip = g_strdup_printf("Open shortcuts: %s", t_shortcuts);
     status_bar_on_hover(win->shortcuts_btn, win, tip);
     g_free(tip);
+
+    tip = g_strdup_printf("Submit prompt: %s", t_submit);
+    status_bar_on_hover(win->submit_btn, win, tip);
+    g_free(tip);
+    if (strlen(t_cancel) > 0) {
+      tip = g_strdup_printf("Interrupt running query: ESC, ESC / %s", t_cancel);
+    } else {
+      tip = g_strdup("Interrupt running query: ESC, ESC");
+    }
+    status_bar_on_hover(win->cancel_btn, win, tip);
+    g_free(tip);
   }
-  gtk_widget_set_tooltip_text(win->submit_btn, "Submit — enter / return");
-  status_bar_on_hover(win->submit_btn, win, "Submit prompt: enter / return");
   status_bar_on_hover(
       win->prompt_view, win,
-      "Type your prompt.  Enter to submit, Shift+Enter for newline.");
+      "Type your prompt.  Ctrl+Enter to submit, Enter for newline.");
   status_bar_on_hover(
       win->output_view, win,
       "Click gutter to mark lines.  Ctrl+Shift+C to copy marked lines.");
@@ -725,6 +761,8 @@ static void set_loading_state(AppWindow *win, const char *cmd) {
 
   gtk_button_set_label(GTK_BUTTON(win->submit_btn), "Running...");
 
+  set_status_text(win, "Running Query: ESC to interrupt");
+
   update_submit_sensitivity(win);
 }
 
@@ -733,8 +771,11 @@ static void set_finished_state(AppWindow *win, char *cmd, gint64 elapsed,
   gint64 ms;
   int lines;
 
+  disarm_escape(win);
   set_load_state_common(win, FALSE);
   win->state = STATE_FINISHED;
+
+  set_status_text(win, "Ready");
 
   ms = elapsed / 1000;
   if (output != NULL && output[0] != '\0') {
@@ -762,17 +803,23 @@ static void set_finished_state(AppWindow *win, char *cmd, gint64 elapsed,
 
   gtk_button_set_label(GTK_BUTTON(win->submit_btn), "Submit");
   update_submit_sensitivity(win);
+  set_prompt_focused(win);
 }
 
 static void set_canceled_state(AppWindow *win, char *cmd) {
+  disarm_escape(win);
   set_load_state_common(win, FALSE);
   win->state = STATE_CANCELED;
+
+  set_status_text(win, "Interrupted");
+  g_timeout_add(2000, (GSourceFunc)status_pop_cb, win->status_bar);
 
   log_append(win, "cancel → Cancelled.");
   g_free(cmd);
 
   gtk_button_set_label(GTK_BUTTON(win->submit_btn), "Submit");
   update_submit_sensitivity(win);
+  set_prompt_focused(win);
 }
 
 static void set_errored_state(AppWindow *win, char *cmd,
@@ -780,8 +827,11 @@ static void set_errored_state(AppWindow *win, char *cmd,
   GtkTextBuffer *buf;
   g_autofree char *err_summary = NULL;
 
+  disarm_escape(win);
   set_load_state_common(win, FALSE);
   win->state = STATE_FINISHED;
+
+  set_status_text(win, "Ready");
 
   if (stderr_output != NULL && stderr_output[0] != '\0') {
     const char *nl;
@@ -806,6 +856,7 @@ static void set_errored_state(AppWindow *win, char *cmd,
 
   gtk_button_set_label(GTK_BUTTON(win->submit_btn), "Submit");
   update_submit_sensitivity(win);
+  set_prompt_focused(win);
 }
 
 /* ── submit ────────────────────────────────────────────────────── */
@@ -903,6 +954,28 @@ static void on_cancel(AppWindow *win) {
     return;
   log_append(win, "cancel → user requested");
   command_cancel(win);
+}
+
+static gboolean esc_arm_timeout_cb(gpointer data) {
+  AppWindow *win = data;
+
+  win->esc_armed = FALSE;
+  win->esc_reset_timeout = 0;
+  if (win->subprocess != NULL)
+    set_status_text(win, "Running Query: ESC to interrupt");
+  else
+    set_status_text(win, "Ready");
+  return G_SOURCE_REMOVE;
+}
+
+static void disarm_escape(AppWindow *win) {
+  if (win->esc_armed) {
+    win->esc_armed = FALSE;
+    if (win->esc_reset_timeout != 0) {
+      g_source_remove(win->esc_reset_timeout);
+      win->esc_reset_timeout = 0;
+    }
+  }
 }
 
 /* ── copy ──────────────────────────────────────────────────────── */
@@ -1031,7 +1104,7 @@ static void on_log(AppWindow *win) {
     gtk_text_buffer_get_end_iter(buf, &end);
     {
       g_autofree char *header =
-          g_strdup_printf("Promptr v" VERSION " — session %s\n", timestr);
+          g_strdup_printf("Promptr v" VERSION ": session %s\n", timestr);
       gtk_text_buffer_insert(buf, &end, header, -1);
     }
 
@@ -1062,6 +1135,8 @@ static void on_log(AppWindow *win) {
     gtk_layer_set_keyboard_mode(GTK_WINDOW(win->window),
                                 GTK_LAYER_SHELL_KEYBOARD_MODE_ON_DEMAND);
 
+  if (gtk_widget_is_visible(win->log_popup))
+    gtk_widget_set_visible(win->log_popup, FALSE);
   gtk_window_present(GTK_WINDOW(win->log_popup));
 }
 
@@ -1148,15 +1223,13 @@ static void on_shortcuts(AppWindow *win) {
         {NULL, "Focus prompt input"}, {NULL, "Copy marked lines"},
         {NULL, "Close window"},       {NULL, "Close & quit"},
         {NULL, "Open session log"},   {NULL, "Open this shortcuts window"},
-        {NULL, "Submit prompt"},      {NULL, "Newline in prompt"},
-        {NULL, "Hide window"},
+        {NULL, "Submit prompt"},      {NULL, "Cancel"},
     };
     const char *hardcoded_shortcuts[] = {
-        NULL,          NULL,  NULL, NULL, NULL, NULL, "enter / return",
-        "shift+enter", "esc",
+        NULL, NULL, NULL, NULL, NULL, NULL, NULL, "ESC, ESC",
     };
 
-    int n_config = 6;
+    int n_config = 7;
 
     rows[0].shortcut = accel_to_human(runtime_config_get_string(
         win->config, "kb_focus_prompt", KB_FOCUS_PROMPT));
@@ -1170,6 +1243,8 @@ static void on_shortcuts(AppWindow *win) {
         runtime_config_get_string(win->config, "kb_log", KB_LOG));
     rows[5].shortcut = accel_to_human(
         runtime_config_get_string(win->config, "kb_shortcuts", KB_SHORTCUTS));
+    rows[6].shortcut = accel_to_human(
+        runtime_config_get_string(win->config, "kb_submit", KB_SUBMIT));
 
     for (int i = n_config; i < (int)G_N_ELEMENTS(rows); i++)
       rows[i].shortcut = hardcoded_shortcuts[i];
@@ -1220,6 +1295,8 @@ static void on_shortcuts(AppWindow *win) {
     gtk_layer_set_keyboard_mode(GTK_WINDOW(win->window),
                                 GTK_LAYER_SHELL_KEYBOARD_MODE_ON_DEMAND);
 
+  if (gtk_widget_is_visible(win->shortcuts_popup))
+    gtk_widget_set_visible(win->shortcuts_popup, FALSE);
   gtk_window_present(GTK_WINDOW(win->shortcuts_popup));
 }
 
@@ -1228,23 +1305,46 @@ static void on_shortcuts(AppWindow *win) {
 static gboolean on_prompt_key_pressed(GtkEventControllerKey *controller,
                                       guint keyval, guint keycode,
                                       GdkModifierType state, AppWindow *win) {
+  GdkModifierType mods;
+
   (void)controller;
   (void)keycode;
 
+  mods = state &
+         (GDK_SHIFT_MASK | GDK_CONTROL_MASK | GDK_ALT_MASK | GDK_SUPER_MASK);
+
   if (keyval == GDK_KEY_Escape) {
-    if (runtime_config_get_bool(win->config, "escape_hides",
-                                ESCAPE_HIDES_WINDOW))
-      gtk_widget_set_visible(win->window, FALSE);
-    return GDK_EVENT_STOP;
+    if (win->subprocess != NULL) {
+      if (win->esc_armed) {
+        disarm_escape(win);
+        on_cancel(win);
+        return GDK_EVENT_STOP;
+      }
+      win->esc_armed = TRUE;
+      win->esc_reset_timeout = g_timeout_add(2000, esc_arm_timeout_cb, win);
+      set_status_text(win, "Press ESC again to interrupt");
+      return GDK_EVENT_STOP;
+    }
+    return GDK_EVENT_PROPAGATE;
+  }
+
+  if (win->kb_cancel_keyval != 0 &&
+      gdk_keyval_to_lower(keyval) == win->kb_cancel_keyval &&
+      mods == win->kb_cancel_mods) {
+    if (win->subprocess != NULL) {
+      disarm_escape(win);
+      on_cancel(win);
+      return GDK_EVENT_STOP;
+    }
   }
 
   if (keyval == GDK_KEY_Return || keyval == GDK_KEY_KP_Enter) {
-    if ((state & GDK_SHIFT_MASK) == 0) {
-      if (gtk_widget_is_sensitive(win->submit_btn) && win->subprocess == NULL) {
+    if (win->kb_submit_mods != 0 && mods == win->kb_submit_mods) {
+      if (gtk_widget_is_sensitive(win->submit_btn) && win->subprocess == NULL)
         on_submit(win);
-      }
       return GDK_EVENT_STOP;
     }
+    return GDK_EVENT_PROPAGATE;
   }
 
   return GDK_EVENT_PROPAGATE;
@@ -1263,6 +1363,30 @@ static gboolean on_window_key_pressed(GtkEventControllerKey *controller,
   keyval = gdk_keyval_to_lower(keyval);
   mods = state &
          (GDK_SHIFT_MASK | GDK_CONTROL_MASK | GDK_ALT_MASK | GDK_SUPER_MASK);
+
+  if (keyval == GDK_KEY_Escape) {
+    if (win->subprocess != NULL) {
+      if (win->esc_armed) {
+        disarm_escape(win);
+        on_cancel(win);
+        return GDK_EVENT_STOP;
+      }
+      win->esc_armed = TRUE;
+      win->esc_reset_timeout = g_timeout_add(2000, esc_arm_timeout_cb, win);
+      set_status_text(win, "Press ESC again to interrupt");
+      return GDK_EVENT_STOP;
+    }
+    return GDK_EVENT_PROPAGATE;
+  }
+
+  if (win->kb_cancel_keyval != 0 && keyval == win->kb_cancel_keyval &&
+      mods == win->kb_cancel_mods) {
+    if (win->subprocess != NULL) {
+      disarm_escape(win);
+      on_cancel(win);
+      return GDK_EVENT_STOP;
+    }
+  }
 
   if (keyval == win->kb_log_keyval && mods == win->kb_log_mods) {
     on_log(win);
