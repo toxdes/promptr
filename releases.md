@@ -96,7 +96,7 @@ apt update && apt install promptr
 
 ### User-facing setup (apt)
 
-Add the package signing key and repository:
+Set up the apt repository:
 
 ```sh
 sudo install -m 0755 -d /etc/apt/keyrings
@@ -159,7 +159,7 @@ dnf install promptr
 
 ### User-facing setup (rpm)
 
-Add the package signing key and repository:
+Set up the DNF repository:
 
 ```sh
 sudo rpm --import https://packages.toxdes.com/rpm/pubkey.gpg

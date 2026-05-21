@@ -19,7 +19,7 @@ resizable window. Supports `layer-shell` on wlroots compositors.
 
 ### Ubuntu / Debian
 
-Add the package signing key and repository:
+Set up the apt repository:
 
 ```sh
 sudo install -m 0755 -d /etc/apt/keyrings
@@ -41,7 +41,7 @@ sudo apt install promptr
 
 ### Fedora / RHEL
 
-Add the package signing key and repository:
+Set up the DNF repository:
 
 ```sh
 sudo rpm --import https://packages.toxdes.com/rpm/pubkey.gpg
@@ -92,31 +92,29 @@ See [Build](#build) to compile from source.
 promptr
 ```
 
-- Type a query in the **Prompt** field. Shift+Enter inserts a newline.
+- Type a query in the **Prompt** field. Enter inserts a newline.
 - Optionally select an **Agent** and a **Model** from the dropdowns.
-- Press **Enter** or click **Submit** to execute.
+- Press **Ctrl+Enter** or click **Submit** to execute.
 - Output appears in the **Output** area with line numbers and gutter marks.
 - Click the gutter to toggle marks. **Copy Marked Lines** copies only
   marked lines.
-- Press **Escape** or **Close** to hide the window.
-- **Close & Quit** exits. Model and agent are persisted to
-  `~/.local/share/promptr/state`.
-- Click **Log...** to view the session log.
-- Click **Shortcuts...** or press `ctrl+f1` to see all shortcuts.
+- Press **Escape** during a running query to interrupt (press again to confirm).
+- **Close** hides the window. **Close & Quit** exits. Model and agent are
+  persisted to `~/.local/share/promptr/state`.
 
 ### Keyboard shortcuts
 
 | Shortcut       | Action                              |
 | -------------- | ----------------------------------- |
+| `ctrl+enter`   | Submit prompt                       |
+| `enter`        | Newline in prompt                   |
 | `ctrl+k`       | Focus prompt with all text selected |
 | `ctrl+shift+c` | Copy marked lines                   |
 | `ctrl+q`       | Close window                        |
 | `ctrl+shift+q` | Close & Quit                        |
 | `ctrl+shift+d` | Open session log                    |
 | `ctrl+f1`      | Open shortcuts popup                |
-| `esc`          | Hide window (configurable)          |
-| `enter`        | Submit prompt                       |
-| `shift+enter`  | Newline in prompt                   |
+| `esc`          | Cancel running query (double-escape)|
 
 All shortcuts are configurable in `~/.config/promptr/config`.
 
@@ -138,7 +136,6 @@ over `config.h`. Edit and restart.
 [preferences]
 width=900
 height=700
-escape_hides=1
 layer_shell=0
 notify_on_copy=1
 mark_bg_color=#33cc7f
@@ -148,6 +145,10 @@ kb_close=<Control>q
 kb_quit=<Control><Shift>q
 kb_log=<Control><Shift>d
 kb_shortcuts=<Control>F1
+kb_submit=<Control>Return
+kb_cancel=
+command_expanded=0
+gsk_renderer=cairo
 opencode_path=opencode
 model_options=opencode-go/deepseek-v4-flash,opencode-go/deepseek-v4-pro,...
 agent_options=linux_cmd,None
