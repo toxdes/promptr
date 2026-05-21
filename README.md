@@ -19,7 +19,7 @@ resizable window. Supports `layer-shell` on wlroots compositors.
 
 ### Ubuntu / Debian
 
-Enable the apt repository and install:
+Add the package signing key and repository:
 
 ```sh
 sudo install -m 0755 -d /etc/apt/keyrings
@@ -41,7 +41,7 @@ sudo apt install promptr
 
 ### Fedora / RHEL
 
-Enable the DNF repository and install:
+Add the package signing key and repository:
 
 ```sh
 sudo rpm --import https://packages.toxdes.com/rpm/pubkey.gpg
