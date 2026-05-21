@@ -1,0 +1,189 @@
+# Releases
+
+## Building packages
+
+Build `.deb`, `.rpm`, `.AppImage`, and a PKGBUILD for all platforms
+with Docker:
+
+```sh
+python3 build-all.py
+```
+
+For AppImages:
+
+```sh
+python3 build-all.py --include-appimage
+```
+
+Requires Docker with `buildx`. Output in `dist/`:
+
+```
+dist/
+  promptr_x.y.z_amd64.deb
+  promptr_x.y.z_arm64.deb
+  promptr-x.y.z-1.x86_64.rpm
+  promptr-x.y.z-1.aarch64.rpm
+  promptr-x.y.z-amd64.AppImage
+  promptr-x.y.z-arm64.AppImage
+  PKGBUILD
+```
+
+## Release workflow
+
+1. Bump the version in `VERSION`, commit
+2. Tag: `git tag v0.1.7 && git push origin v0.1.7`
+3. Build: `python3 build-all.py [--include-appimage]`. Skip AppImage for
+   smaller releases.
+4. Create a GitHub release and upload artifacts from `dist/`
+5. Push to AUR: `python3 release-aur.py`
+6. Push to apt repository: `./release-apt.py`
+7. Push to RPM repository: `./release-rpm.py`
+
+## Publishing to the apt repository
+
+promptr is distributed via a self-hosted repository at
+`https://packages.toxdes.com/apt`.
+
+### Prerequisites
+
+- [uv](https://docs.astral.sh/uv/) (dependencies are declared inline in the
+  script)
+- `gpg` for repository signing
+- `dpkg-deb` for package inspection (usually already installed on
+  Debian/Ubuntu)
+
+Install uv:
+
+```sh
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+
+### Environment
+
+| Variable | Purpose |
+|---|---|
+| `AWS_ACCESS_KEY_ID` | Cloudflare R2 access key |
+| `AWS_SECRET_ACCESS_KEY` | Cloudflare R2 secret key |
+| `AWS_ENDPOINT_URL` | R2 endpoint (`https://<accountid>.r2.cloudflarestorage.com`) |
+| `AWS_BUCKET` | R2 bucket name |
+| `GPG_KEY_ID` | GPG key ID for repository signing |
+| `GPG_PASSPHRASE` | GPG key passphrase (only needed if the key has one) |
+
+### Publishing
+
+Build the apt repository, sign the metadata, and upload to R2:
+
+```sh
+./release-apt.py
+```
+
+Test locally first:
+
+```sh
+./release-apt.py --dry-run    # build repo, skip upload
+./release-apt.py --serve      # build and serve via HTTP (port 8080)
+```
+
+With `--serve`, test the repo in a container:
+
+```sh
+docker run --network=host --rm -it debian:bookworm bash
+# Inside the container:
+echo 'deb [trusted=yes] http://localhost:8080/apt stable main' \
+  > /etc/apt/sources.list.d/promptr.list
+apt update && apt install promptr
+```
+
+### User-facing setup (apt)
+
+Users add the repository with:
+
+```sh
+sudo install -m 0755 -d /etc/apt/keyrings
+curl -fsSL https://packages.toxdes.com/apt/pubkey.gpg \
+  | sudo tee /etc/apt/keyrings/promptr.asc > /dev/null
+sudo chmod a+r /etc/apt/keyrings/promptr.asc
+
+sudo tee /etc/apt/sources.list.d/promptr.sources <<'EOF'
+Types: deb
+URIs: https://packages.toxdes.com/apt
+Suites: stable
+Components: main
+Signed-By: /etc/apt/keyrings/promptr.asc
+EOF
+
+sudo apt update
+sudo apt install promptr
+```
+
+## Publishing to the RPM repository
+
+promptr is distributed via a self-hosted repository at
+`https://packages.toxdes.com/rpm`.
+
+### Prerequisites
+
+- [uv](https://docs.astral.sh/uv/)
+- `gpg` for repository signing
+- `createrepo_c` for generating RPM metadata (`apt install createrepo-c` on
+  Debian/Ubuntu)
+
+### Publishing
+
+Build the RPM repository, sign the metadata, and upload to R2:
+
+```sh
+./release-rpm.py
+```
+
+Test locally first:
+
+```sh
+./release-rpm.py --dry-run    # build repo, skip upload
+./release-rpm.py --serve      # build and serve via HTTP (port 8080)
+```
+
+With `--serve`, test the repo in a container:
+
+```sh
+docker run --network=host --rm -it fedora:latest bash
+# Inside the container:
+tee /etc/yum.repos.d/promptr.repo <<'EOF'
+[promptr]
+baseurl=http://localhost:8080/rpm
+gpgcheck=0
+enabled=1
+EOF
+dnf install promptr
+```
+
+### User-facing setup (rpm)
+
+Users add the repository with:
+
+```sh
+sudo rpm --import https://packages.toxdes.com/rpm/pubkey.gpg
+
+sudo tee /etc/yum.repos.d/promptr.repo <<'EOF'
+[promptr]
+name=Promptr
+baseurl=https://packages.toxdes.com/rpm
+gpgcheck=1
+gpgkey=https://packages.toxdes.com/rpm/pubkey.gpg
+enabled=1
+EOF
+
+sudo dnf install promptr
+```
+
+## Publishing to Arch Linux (AUR)
+
+Pushes PKGBUILD and `.SRCINFO` to `promptr-git` and `promptr-bin` on the AUR.
+
+```sh
+python3 release-aur.py --type git     # for source package
+python3 release-aur.py --type bin     # for binary package
+python3 release-aur.py --type both    # both (default)
+```
+
+Requires an SSH key registered with your AUR account.

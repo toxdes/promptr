@@ -19,34 +19,57 @@ resizable window. Supports `layer-shell` on wlroots compositors.
 
 ### Ubuntu / Debian
 
-Download the `.deb` from the [latest release](https://github.com/toxdes/promptr/releases/latest),
-then:
+Add the apt repository:
 
 ```sh
-sudo dpkg -i promptr_*.deb
+sudo install -m 0755 -d /etc/apt/keyrings
+curl -fsSL https://packages.toxdes.com/apt/pubkey.gpg \
+  | sudo tee /etc/apt/keyrings/promptr.asc > /dev/null
+sudo chmod a+r /etc/apt/keyrings/promptr.asc
+
+sudo tee /etc/apt/sources.list.d/promptr.sources <<'EOF'
+Types: deb
+URIs: https://packages.toxdes.com/apt
+Suites: stable
+Components: main
+Signed-By: /etc/apt/keyrings/promptr.asc
+EOF
+
+sudo apt update
+sudo apt install promptr
 ```
 
 ### Fedora / RHEL
 
-Download the `.rpm` from the [latest release](https://github.com/toxdes/promptr/releases/latest),
-then:
+Add the DNF repository:
 
 ```sh
-sudo rpm -i promptr-*.rpm
+sudo rpm --import https://packages.toxdes.com/rpm/pubkey.gpg
+
+sudo tee /etc/yum.repos.d/promptr.repo <<'EOF'
+[promptr]
+name=Promptr
+baseurl=https://packages.toxdes.com/rpm
+gpgcheck=1
+gpgkey=https://packages.toxdes.com/rpm/pubkey.gpg
+enabled=1
+EOF
+
+sudo dnf install promptr
 ```
 
 ### Arch Linux
 
-Build from latest source:
-
-```sh
-yay -S promptr-git
-```
-
-Or install the pre-built binary (faster):
+promptr is available in the AUR. Install with an AUR helper:
 
 ```sh
 yay -S promptr-bin
+```
+
+Or build from latest source:
+
+```sh
+yay -S promptr-git
 ```
 
 ### Manual install
@@ -163,39 +186,10 @@ sudo make install PREFIX=/usr
 
 ## Releases
 
-Build `.deb`, `.rpm`, `.AppImage`, and a PKGBUILD for all platforms
-with Docker:
+Pre-built `.deb` and `.rpm` packages are available on the
+[GitHub releases page](https://github.com/toxdes/promptr/releases/latest).
 
-```sh
-python3 build-all.py
-```
-
-For AppImages:
-
-```sh
-python3 build-all.py --include-appimage
-```
-
-Requires Docker with `buildx`. Output in `dist/`:
-
-```
-dist/
-  promptr_x.y.z_amd64.deb
-  promptr_x.y.z_arm64.deb
-  promptr-x.y.z-1.x86_64.rpm
-  promptr-x.y.z-1.aarch64.rpm
-  promptr-x.y.z-amd64.AppImage
-  promptr-x.y.z-arm64.AppImage
-  PKGBUILD
-```
-
-### Release workflow
-
-1. Bump the version in `VERSION`, commit
-2. Tag: `git tag v0.1.4 && git push origin v0.1.4`
-3. Build: `python3 build-all.py [--include-appimage]`, we skip AppImage for smaller releases.
-4. Create a GitHub release and upload artifacts from `dist/`
-5. Push to AUR: `python3 release-aur.py`
+For building packages and the full release workflow, see [releases.md](releases.md).
 
 ## License
 
