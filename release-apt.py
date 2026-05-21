@@ -103,7 +103,7 @@ def build_repo(root_dir, debs):
         entries = []
         for deb_path in sorted(arch_debs):
             control = parse_control(deb_path)
-            rel_name = f"{PREFIX}/pool/{COMPONENT}/p/promptr/{deb_path.name}"
+            rel_name = f"pool/{COMPONENT}/p/promptr/{deb_path.name}"
             md5, sha1, sha256, size = compute_hashes(deb_path)
 
             control["Filename"] = rel_name
