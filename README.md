@@ -72,6 +72,16 @@ Or build from latest source:
 yay -S promptr-git
 ```
 
+### AppImage
+
+For now, `.AppImage` packages are available in select releases. Check the [releases page](https://github.com/toxdes/promptr/releases).
+
+Once you have the `promptr-*.AppImage`, run:
+```sh
+chmod +x promptr-*.AppImage
+./promptr-*.AppImage
+```
+
 ### Manual install
 
 See [Build](#build) to compile from source.
