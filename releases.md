@@ -6,13 +6,13 @@ Build `.deb`, `.rpm`, `.AppImage`, and a PKGBUILD for all platforms
 with Docker:
 
 ```sh
-python3 build-all.py
+./build-all.py
 ```
 
 For AppImages:
 
 ```sh
-python3 build-all.py --include-appimage
+./build-all.py --include-appimage
 ```
 
 Requires Docker with `buildx`. Output in `dist/`:
@@ -32,10 +32,10 @@ dist/
 
 1. Bump the version in `VERSION`, commit
 2. Tag: `git tag v0.1.7 && git push origin v0.1.7`
-3. Build: `python3 build-all.py [--include-appimage]`. Skip AppImage for
+3. Build: `./build-all.py [--include-appimage]`. Skip AppImage for
    smaller releases.
 4. Create a GitHub release and upload artifacts from `dist/`
-5. Push to AUR: `python3 release-aur.py`
+5. Push to AUR: `./release-aur.py`
 6. Push to apt repository: `./release-apt.py`
 7. Push to RPM repository: `./release-rpm.py`
 
@@ -181,9 +181,9 @@ sudo dnf install promptr
 Pushes PKGBUILD and `.SRCINFO` to `promptr-git` and `promptr-bin` on the AUR.
 
 ```sh
-python3 release-aur.py --type git     # for source package
-python3 release-aur.py --type bin     # for binary package
-python3 release-aur.py --type both    # both (default)
+./release-aur.py --type git     # for source package
+./release-aur.py --type bin     # for binary package
+./release-aur.py --type both    # both (default)
 ```
 
 Requires an SSH key registered with your AUR account.
