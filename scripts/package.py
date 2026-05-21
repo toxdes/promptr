@@ -218,11 +218,44 @@ exec "${APPDIR}/usr/bin/promptr" "$@"
     squashed.unlink()
 
 
+# ── .tar.gz ────────────────────────────────────────────────────
+def build_tar():
+    name = f"promptr_{VERSION}_{deb_arch}"
+    pkg = Path("/pkg-tar")
+
+    dirs = [
+        pkg / "usr/bin",
+        pkg / "usr/share/icons/hicolor/scalable/apps",
+        pkg / "usr/share/applications",
+    ]
+    for d in dirs:
+        d.mkdir(parents=True, exist_ok=True)
+
+    shutil.copy("/build/promptr", pkg / "usr/bin/promptr")
+    (pkg / "usr/bin/promptr").chmod(0o755)
+    shutil.copy(
+        "/build/data/promptr.svg",
+        pkg / "usr/share/icons/hicolor/scalable/apps/promptr.svg",
+    )
+    shutil.copy(
+        "/build/com.toxdes.promptr.desktop",
+        pkg / "usr/share/applications/com.toxdes.promptr.desktop",
+    )
+
+    subprocess.run(
+        ["tar", "-czf", str(OUT / f"{name}.tar.gz"), "-C", str(pkg), "."],
+        check=True,
+    )
+    print(f"  -> {OUT}/{name}.tar.gz")
+    shutil.rmtree(pkg)
+
+
 # ── main ──────────────────────────────────────────────────────
 def main():
     OUT.mkdir(parents=True, exist_ok=True)
     build_deb()
     build_rpm()
+    build_tar()
     if INCLUDE_APPIMAGE:
         print("Including AppImage...")
         build_appimage()

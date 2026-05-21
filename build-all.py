@@ -15,6 +15,7 @@ Output:
     dist/  — packages and PKGBUILD for all platforms
 """
 
+import hashlib
 import subprocess
 import sys
 import shutil
@@ -78,6 +79,17 @@ def main():
     pkgbuild = Path("PKGBUILD")
     if pkgbuild.exists():
         shutil.copy(str(pkgbuild), str(DIST / "PKGBUILD"))
+
+    # Generate checksums
+    sums = []
+    for f in sorted(DIST.iterdir()):
+        if f.is_file() and f.name.endswith((".deb", ".rpm", ".AppImage", ".tar.gz")):
+            sha = hashlib.sha256(f.read_bytes()).hexdigest()
+            sums.append(f"{sha}  {f.name}")
+            (DIST / f"{f.name}.sha256").write_text(f"{sha}  {f.name}\n")
+
+    if sums:
+        (DIST / "SHA256SUMS").write_text("\n".join(sums) + "\n")
 
     # Summary
     print("\nPackages (%s):" % DIST)
