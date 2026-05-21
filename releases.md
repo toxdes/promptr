@@ -96,7 +96,7 @@ apt update && apt install promptr
 
 ### User-facing setup (apt)
 
-Users add the repository with:
+Enable the repository and install:
 
 ```sh
 sudo install -m 0755 -d /etc/apt/keyrings
@@ -159,7 +159,7 @@ dnf install promptr
 
 ### User-facing setup (rpm)
 
-Users add the repository with:
+Enable the repository and install:
 
 ```sh
 sudo rpm --import https://packages.toxdes.com/rpm/pubkey.gpg
