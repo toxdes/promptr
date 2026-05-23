@@ -32,6 +32,7 @@ Types: deb
 URIs: https://packages.toxdes.com/apt
 Suites: stable
 Components: main
+Architectures: amd64 arm64
 Signed-By: /etc/apt/keyrings/promptr.asc
 EOF
 
