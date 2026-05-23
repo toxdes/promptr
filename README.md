@@ -110,6 +110,8 @@ promptr
 | `ctrl+enter`   | Submit prompt                       |
 | `enter`        | Newline in prompt                   |
 | `ctrl+k`       | Focus prompt with all text selected |
+| `ctrl+b`       | Toggle horizontal / vertical layout |
+| `ctrl+o`       | Pop out output into its own window  |
 | `ctrl+shift+c` | Copy marked lines                   |
 | `ctrl+q`       | Close window                        |
 | `ctrl+shift+q` | Close & Quit                        |
