@@ -22,6 +22,15 @@
 #define KB_SUBMIT             "<Control>Return"
 #define KB_CANCEL             ""
 
+/* UI layout ("horizontal" or "vertical") */
+#define LAYOUT_DEFAULT        "horizontal"
+
+/* Toggle horizontal/vertical layout */
+#define KB_LAYOUT             "<Control>b"
+
+/* Pop out the output text area into its own window */
+#define KB_POPOUT             "<Control>o"
+
 /* Layer-shell overlay on wlroots compositors (0 or 1) */
 #define LAYER_SHELL_ENABLED   0
 

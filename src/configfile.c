@@ -61,6 +61,10 @@ static const ConfigDefault CONFIG_DEFAULTS[] = {
      " aliases to ngl\n"
      "#   vulkan - Vulkan (GPU), similar memory to GL;"
      " requires Vulkan driver"},
+    {"kb_layout", KB_LAYOUT, "# Toggle horizontal/vertical layout"},
+    {"kb_popout", KB_POPOUT,
+     "# Pop out the output text area into its own window"},
+    {"layout", LAYOUT_DEFAULT, "# UI layout (\"horizontal\" or \"vertical\")"},
     {NULL, NULL, NULL}};
 
 static void migrate_config(const char *path, GKeyFile *kf) {

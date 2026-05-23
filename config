@@ -55,3 +55,12 @@ output_font_size=0
 #   gl     - OpenGL (GPU), deprecated in 4.14, aliases to ngl
 #   vulkan - Vulkan (GPU), similar memory to GL; requires Vulkan driver
 gsk_renderer=cairo
+
+# Toggle horizontal/vertical layout
+kb_layout=<Control>b
+
+# Pop out the output text area into its own window
+kb_popout=<Control>o
+
+# UI layout ("horizontal" or "vertical")
+layout=horizontal
