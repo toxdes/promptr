@@ -24,6 +24,8 @@ typedef struct _AppWindow {
   GtkWidget *output_label;
   GtkWidget *log_btn;
   GtkWidget *log_popup;
+  GtkWidget *log_btn_top;
+  GtkWidget *shortcuts_btn_top;
   GtkWidget *status_bar;
   GtkWidget *shortcuts_btn;
   GtkWidget *shortcuts_popup;
@@ -65,6 +67,28 @@ typedef struct _AppWindow {
   gboolean follow_up;
   gboolean follow_up_active;
   char *last_tmpdir;
+
+  int layout_mode;
+  gboolean output_popped;
+  GtkWidget *popout_window;
+  GtkWidget *popout_btn;
+  GtkWidget *prompt_btns;
+  GtkWidget *agent_btns;
+  GtkWidget *content_stack;
+  GtkWidget *layout_paned;
+  GtkWidget *pane_left;
+  GtkWidget *pane_right;
+  GtkWidget *layout_popped;
+  GtkWidget *prompt_section;
+  GtkWidget *fu_row;
+  GtkWidget *agent_row;
+  GtkWidget *output_section;
+  GtkWidget *marked_row;
+  GtkWidget *action_row;
+  guint kb_layout_keyval;
+  GdkModifierType kb_layout_mods;
+  guint kb_popout_keyval;
+  GdkModifierType kb_popout_mods;
 } AppWindow;
 
 AppWindow *app_window_new(GtkApplication *app);
