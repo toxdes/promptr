@@ -67,6 +67,10 @@ typedef struct _AppWindow {
   gboolean follow_up;
   gboolean follow_up_active;
   char *last_tmpdir;
+  GList *qa_history;
+  char *last_query;
+  char *last_output;
+  int follow_up_turn;
 
   int layout_mode;
   gboolean output_popped;

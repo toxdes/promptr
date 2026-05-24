@@ -1035,6 +1035,9 @@ void app_window_free(gpointer data) {
   g_free(win->marked_lines_str);
   g_free(win->opencode_bin);
   g_free(win->last_tmpdir);
+  g_list_free_full(win->qa_history, g_free);
+  g_free(win->last_query);
+  g_free(win->last_output);
   runtime_config_free(win->config);
   if (win->log_file != NULL)
     fclose(win->log_file);
@@ -1085,17 +1088,15 @@ static void set_finished_state(AppWindow *win, char *cmd, gint64 elapsed,
     GtkTextBuffer *buf;
     buf = gtk_text_view_get_buffer(GTK_TEXT_VIEW(win->output_view));
     if (win->follow_up_active) {
-      GtkTextIter start, end;
-      g_autofree char *old_text = NULL;
-      g_autofree char *combined = NULL;
+      GString *display = g_string_new(output);
+      GList *l;
 
-      gtk_text_buffer_get_bounds(buf, &start, &end);
-      old_text = gtk_text_buffer_get_text(buf, &start, &end, FALSE);
-      if (old_text != NULL && old_text[0] != '\0')
-        combined = g_strdup_printf("%s\n---\n%s", output, old_text);
-      else
-        combined = g_strdup(output);
-      gtk_text_buffer_set_text(buf, combined, -1);
+      for (l = win->qa_history; l != NULL; l = l->next)
+        g_string_append_printf(display, "\n---\n%s", (char *)l->data);
+      {
+        g_autofree char *combined = g_string_free(display, FALSE);
+        gtk_text_buffer_set_text(buf, combined, -1);
+      }
       lines = gtk_text_buffer_get_line_count(buf);
     } else {
       gtk_text_buffer_set_text(buf, output, -1);
@@ -1105,6 +1106,8 @@ static void set_finished_state(AppWindow *win, char *cmd, gint64 elapsed,
         win->defaults_applied = TRUE;
       }
     }
+    g_free(win->last_output);
+    win->last_output = g_strdup(output);
     update_marked_label(win);
     gtk_widget_set_sensitive(win->copy_btn, TRUE);
   } else {
@@ -1219,6 +1222,23 @@ static void on_submit(AppWindow *win) {
       gtk_widget_set_sensitive(win->follow_up_check, TRUE);
     }
   }
+
+  if (is_follow_up) {
+    if (win->last_output != NULL) {
+      win->follow_up_turn++;
+      char *block = g_strdup_printf("Q.%d: %s\nA: %s", win->follow_up_turn,
+                                    win->last_query, win->last_output);
+      win->qa_history = g_list_prepend(win->qa_history, block);
+    }
+  } else {
+    g_list_free_full(win->qa_history, g_free);
+    win->qa_history = NULL;
+    win->follow_up_turn = 0;
+    g_free(win->last_output);
+    win->last_output = NULL;
+  }
+  g_free(win->last_query);
+  win->last_query = g_strdup(query);
 
   if (is_follow_up)
     tmpdir = g_strdup(win->last_tmpdir);
