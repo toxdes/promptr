@@ -45,6 +45,8 @@ static gboolean on_prompt_key_pressed(GtkEventControllerKey *controller,
 static gboolean on_window_key_pressed(GtkEventControllerKey *controller,
                                       guint keyval, guint keycode,
                                       GdkModifierType state, AppWindow *win);
+static void on_prompt_focus_changed(GObject *object, GParamSpec *pspec,
+                                    gpointer user_data);
 static gboolean esc_arm_timeout_cb(gpointer data);
 static void disarm_escape(AppWindow *win);
 static gboolean status_pop_cb(gpointer data);
@@ -219,6 +221,9 @@ static GtkWidget *create_prompt_section(Tab *tab, AppWindow *win) {
     gtk_widget_add_controller(tab->prompt_view, key_ctrl);
     g_signal_connect(key_ctrl, "key-pressed", G_CALLBACK(on_prompt_key_pressed),
                      win);
+
+    g_signal_connect(tab->prompt_view, "notify::has-focus",
+                     G_CALLBACK(on_prompt_focus_changed), win);
   }
 
   return box;
@@ -474,6 +479,656 @@ static GtkWidget *create_action_row(Tab *tab, AppWindow *win) {
   return row;
 }
 
+/* ── tab management ──────────────────────────────────────────────── */
+
+static void tab_switch_to(AppWindow *win, int idx);
+static void close_tab(AppWindow *win, int idx);
+static void on_new_tab_clicked(AppWindow *win);
+
+static GtkWidget *tab_create_widgets(Tab *tab, AppWindow *win) {
+  GtkWidget *page;
+
+  page = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+  gtk_widget_set_vexpand(page, TRUE);
+
+  tab->prompt_section = create_prompt_section(tab, win);
+  tab->fu_row = create_follow_up_row(tab, win);
+  tab->agent_row = create_agent_row(tab, win);
+  tab->output_section = create_output_section(tab, win);
+  tab->marked_row = create_marked_row(tab, win);
+  tab->action_row = create_action_row(tab, win);
+
+  g_object_ref_sink(tab->prompt_section);
+  g_object_ref_sink(tab->fu_row);
+  g_object_ref_sink(tab->agent_row);
+  g_object_ref_sink(tab->output_section);
+  g_object_ref_sink(tab->marked_row);
+  g_object_ref_sink(tab->action_row);
+
+  {
+    tab->content_stack = gtk_stack_new();
+    gtk_stack_set_vhomogeneous(GTK_STACK(tab->content_stack), FALSE);
+    gtk_widget_set_vexpand(tab->content_stack, TRUE);
+    gtk_box_append(GTK_BOX(page), tab->content_stack);
+
+    tab->layout_paned = gtk_paned_new(GTK_ORIENTATION_VERTICAL);
+    gtk_stack_add_named(GTK_STACK(tab->content_stack), tab->layout_paned,
+                        "paned");
+
+    tab->pane_left = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4);
+    tab->pane_right = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4);
+    g_object_ref_sink(tab->pane_left);
+    g_object_ref_sink(tab->pane_right);
+
+    tab->layout_popped = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
+    gtk_widget_set_margin_start(tab->layout_popped, 12);
+    gtk_widget_set_margin_end(tab->layout_popped, 12);
+    gtk_widget_set_margin_top(tab->layout_popped, 12);
+    gtk_widget_set_vexpand(tab->layout_popped, TRUE);
+    gtk_stack_add_named(GTK_STACK(tab->content_stack), tab->layout_popped,
+                        "popped");
+  }
+
+  return page;
+}
+
+static GtkWidget *tab_create_label(Tab *tab, int idx, AppWindow *win);
+static void on_close_label_clicked(GtkGestureClick *gesture, int n_press,
+                                   double x, double y, AppWindow *win);
+static void on_tab_label_clicked(GtkGestureClick *gesture, int n_press,
+                                 double x, double y, AppWindow *win);
+static void on_tab_rename_activate(GtkEntry *entry, AppWindow *win);
+static void on_tab_rename_cancel(GtkEntry *entry, AppWindow *win);
+static void on_tab_focus_leave(GtkEventControllerFocus *ctrl, AppWindow *win);
+static GdkContentProvider *on_tab_drag_prepare(GtkDragSource *source, double x,
+                                               double y, AppWindow *win);
+static GdkDragAction on_tab_drop_motion(GtkDropTarget *drop, double x, double y,
+                                        AppWindow *win);
+static gboolean on_tab_drop(GtkDropTarget *drop, const GValue *value, double x,
+                            double y, AppWindow *win);
+static void on_tab_drop_leave(GtkDropTarget *drop, AppWindow *win);
+
+static void tab_update_status_dot(Tab *tab) {
+  GtkWidget *dot;
+
+  dot = tab->status_dot;
+  if (dot == NULL)
+    return;
+
+  gtk_widget_remove_css_class(dot, "loading");
+  gtk_widget_remove_css_class(dot, "finished");
+
+  if (tab->state == STATE_LOADING)
+    gtk_widget_add_css_class(dot, "loading");
+  else if (tab->state == STATE_FINISHED && tab->has_unseen_output)
+    gtk_widget_add_css_class(dot, "finished");
+}
+
+static void tab_drop_indicator(AppWindow *win, int target_idx) {
+  guint i;
+  int n_pages;
+  GtkNotebook *nb;
+
+  nb = GTK_NOTEBOOK(win->tab_bar);
+  n_pages = gtk_notebook_get_n_pages(nb);
+  for (i = 0; i < (guint)n_pages; i++) {
+    GtkWidget *page, *label;
+
+    page = gtk_notebook_get_nth_page(nb, (int)i);
+    label = gtk_notebook_get_tab_label(nb, page);
+    if (label != NULL) {
+      if ((int)i == target_idx)
+        gtk_widget_add_css_class(label, "tab-drop-target");
+      else
+        gtk_widget_remove_css_class(label, "tab-drop-target");
+    }
+  }
+}
+
+static GtkWidget *tab_create_label(Tab *tab, int idx, AppWindow *win) {
+  GtkWidget *box, *label, *close_btn;
+  const char *name;
+
+  name = tab->name != NULL ? tab->name : "New Tab";
+  box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4);
+  gtk_widget_set_size_request(box, idx == win->active_tab_idx ? 140 : 90, -1);
+  gtk_widget_set_hexpand(box, FALSE);
+
+  {
+    GtkWidget *dot;
+
+    dot = gtk_label_new("\xe2\x97\x8f");
+    gtk_widget_add_css_class(dot, "tab-status-dot");
+    gtk_widget_set_valign(dot, GTK_ALIGN_CENTER);
+    gtk_widget_set_margin_end(dot, 2);
+    gtk_box_append(GTK_BOX(box), dot);
+    tab->status_dot = dot;
+  }
+
+  label = gtk_label_new(name);
+  gtk_widget_set_tooltip_text(label, name);
+  gtk_label_set_ellipsize(GTK_LABEL(label), PANGO_ELLIPSIZE_END);
+  gtk_widget_set_halign(label, GTK_ALIGN_START);
+  gtk_widget_set_hexpand(label, TRUE);
+  gtk_box_append(GTK_BOX(box), label);
+  tab->tab_name_label = label;
+
+  {
+    GtkGesture *click;
+
+    click = gtk_gesture_click_new();
+    gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(click),
+                                  GDK_BUTTON_PRIMARY);
+    g_signal_connect(click, "pressed", G_CALLBACK(on_tab_label_clicked), win);
+    gtk_widget_add_controller(box, GTK_EVENT_CONTROLLER(click));
+    g_object_set_data(G_OBJECT(box), "tab-idx", GINT_TO_POINTER(idx));
+  }
+
+  close_btn = gtk_label_new("x");
+  gtk_widget_add_css_class(close_btn, "tab-close-btn");
+  gtk_widget_set_valign(close_btn, GTK_ALIGN_CENTER);
+  gtk_label_set_xalign(GTK_LABEL(close_btn), 0.5f);
+  gtk_label_set_yalign(GTK_LABEL(close_btn), 0.5f);
+  gtk_widget_set_margin_top(close_btn, 2);
+  gtk_widget_set_margin_bottom(close_btn, 2);
+  gtk_widget_set_cursor_from_name(close_btn, "pointer");
+  {
+    GtkGesture *g;
+
+    g = gtk_gesture_click_new();
+    g_object_set_data(G_OBJECT(close_btn), "tab", tab);
+    g_signal_connect(g, "pressed", G_CALLBACK(on_close_label_clicked), win);
+    gtk_widget_add_controller(close_btn, GTK_EVENT_CONTROLLER(g));
+  }
+  gtk_box_append(GTK_BOX(box), close_btn);
+
+  {
+    GtkDragSource *drag;
+
+    drag = gtk_drag_source_new();
+    gtk_drag_source_set_actions(drag, GDK_ACTION_MOVE);
+    g_signal_connect(drag, "prepare", G_CALLBACK(on_tab_drag_prepare), win);
+    gtk_widget_add_controller(box, GTK_EVENT_CONTROLLER(drag));
+  }
+
+  return box;
+}
+
+static void on_close_label_clicked(GtkGestureClick *gesture, int n_press,
+                                   double x, double y, AppWindow *win) {
+  GtkWidget *label;
+  Tab *tab;
+  guint i;
+
+  (void)n_press;
+  (void)x;
+  (void)y;
+
+  label = gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(gesture));
+  tab = g_object_get_data(G_OBJECT(label), "tab");
+  if (tab == NULL)
+    return;
+
+  for (i = 0; i < win->tabs->len; i++)
+    if (g_ptr_array_index(win->tabs, i) == tab) {
+      close_tab(win, (int)i);
+      return;
+    }
+}
+
+static void on_tab_label_clicked(GtkGestureClick *gesture, int n_press,
+                                 double x, double y, AppWindow *win) {
+  GtkWidget *label_box;
+  int idx;
+  Tab *tab;
+
+  (void)x;
+  (void)y;
+
+  label_box = gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(gesture));
+  idx = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(label_box), "tab-idx"));
+  if (idx < 0 || idx >= (int)win->tabs->len)
+    return;
+
+  if (n_press == 2) {
+    GtkWidget *label, *entry;
+
+    tab = g_ptr_array_index(win->tabs, idx);
+    label = tab->tab_name_label;
+
+    if (label != NULL) {
+      entry = gtk_entry_new();
+      gtk_editable_set_text(GTK_EDITABLE(entry), tab->name);
+      gtk_editable_select_region(GTK_EDITABLE(entry), 0, -1);
+      gtk_widget_set_size_request(entry, 160, -1);
+      g_object_set_data(G_OBJECT(entry), "tab-idx", GINT_TO_POINTER(idx));
+      g_object_set_data_full(G_OBJECT(entry), "orig-name", g_strdup(tab->name),
+                             g_free);
+
+      g_signal_connect(entry, "activate", G_CALLBACK(on_tab_rename_activate),
+                       win);
+
+      {
+        GtkWidget *parent;
+
+        parent = gtk_widget_get_parent(label);
+        if (parent != NULL && GTK_IS_BOX(parent)) {
+          gtk_box_remove(GTK_BOX(parent), label);
+          gtk_box_insert_child_after(GTK_BOX(parent), entry, tab->status_dot);
+          gtk_widget_grab_focus(entry);
+          tab->rename_entry = entry;
+        }
+      }
+    }
+  } else {
+    tab_switch_to(win, idx);
+  }
+}
+
+static void on_tab_rename_activate(GtkEntry *entry, AppWindow *win) {
+  int idx;
+
+  g_object_set_data(G_OBJECT(entry), "rename-done", GINT_TO_POINTER(1));
+
+  if (!GTK_IS_WIDGET(entry) || gtk_widget_get_parent(GTK_WIDGET(entry)) == NULL)
+    return;
+
+  idx = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(entry), "tab-idx"));
+  if (idx >= 0 && idx < (int)win->tabs->len) {
+    Tab *tab;
+    const char *new_name;
+
+    tab = g_ptr_array_index(win->tabs, idx);
+    new_name = gtk_editable_get_text(GTK_EDITABLE(entry));
+    if (new_name != NULL && new_name[0] != '\0') {
+      g_free(tab->name);
+      tab->name = g_strdup(new_name);
+      tab->has_activity = TRUE;
+    }
+
+    tab->rename_entry = NULL;
+
+    {
+      GtkWidget *parent;
+
+      parent = gtk_widget_get_parent(GTK_WIDGET(entry));
+      if (parent != NULL && GTK_IS_BOX(parent)) {
+        GtkWidget *label;
+
+        label = gtk_label_new(tab->name);
+        gtk_widget_set_tooltip_text(label, tab->name);
+        gtk_label_set_ellipsize(GTK_LABEL(label), PANGO_ELLIPSIZE_END);
+        gtk_widget_set_halign(label, GTK_ALIGN_START);
+        gtk_widget_set_hexpand(label, TRUE);
+
+        gtk_box_remove(GTK_BOX(parent), GTK_WIDGET(entry));
+        gtk_box_insert_child_after(GTK_BOX(parent), label, tab->status_dot);
+        tab->tab_name_label = label;
+        set_prompt_focused(tab);
+      }
+    }
+    gtk_window_set_title(GTK_WINDOW(win->window), tab->name);
+  }
+}
+
+static void on_tab_rename_cancel(GtkEntry *entry, AppWindow *win) {
+  int idx;
+  char *orig_name;
+
+  g_object_set_data(G_OBJECT(entry), "rename-done", GINT_TO_POINTER(1));
+
+  if (!GTK_IS_WIDGET(entry) || gtk_widget_get_parent(GTK_WIDGET(entry)) == NULL)
+    return;
+
+  orig_name = g_object_get_data(G_OBJECT(entry), "orig-name");
+  if (orig_name == NULL)
+    return;
+
+  idx = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(entry), "tab-idx"));
+  if (idx >= 0 && idx < (int)win->tabs->len) {
+    Tab *t;
+    GtkWidget *parent;
+
+    t = g_ptr_array_index(win->tabs, idx);
+    if (t != NULL)
+      t->rename_entry = NULL;
+
+    parent = gtk_widget_get_parent(GTK_WIDGET(entry));
+    if (parent != NULL && GTK_IS_BOX(parent)) {
+      GtkWidget *label;
+
+      label = gtk_label_new(orig_name);
+      gtk_widget_set_tooltip_text(label, orig_name);
+      gtk_label_set_ellipsize(GTK_LABEL(label), PANGO_ELLIPSIZE_END);
+      gtk_widget_set_halign(label, GTK_ALIGN_START);
+      gtk_widget_set_hexpand(label, TRUE);
+
+      gtk_box_remove(GTK_BOX(parent), GTK_WIDGET(entry));
+      gtk_box_insert_child_after(GTK_BOX(parent), label, t->status_dot);
+      if (t != NULL)
+        t->tab_name_label = label;
+    }
+    if (t != NULL)
+      set_prompt_focused(t);
+  }
+}
+
+static void on_notebook_page_switched(GtkNotebook *notebook, GtkWidget *page,
+                                      guint page_num, AppWindow *win) {
+  Tab *old_tab;
+
+  (void)notebook;
+  (void)page;
+
+  if (win->tabs == NULL || page_num >= win->tabs->len)
+    return;
+
+  old_tab = app_window_get_active_tab(win);
+  if (old_tab != NULL && old_tab->output_popped)
+    toggle_popout(old_tab);
+
+  {
+    int old_idx;
+    GtkNotebook *nb;
+
+    nb = GTK_NOTEBOOK(win->tab_bar);
+    old_idx = win->active_tab_idx;
+    if (old_idx >= 0 && (guint)old_idx < win->tabs->len) {
+      GtkWidget *old_label_box;
+
+      old_label_box = gtk_notebook_get_tab_label(
+          nb, gtk_notebook_get_nth_page(nb, old_idx));
+      if (old_label_box != NULL) {
+        GtkWidget *child;
+
+        child = gtk_widget_get_first_child(old_label_box);
+        while (child != NULL) {
+          if (GTK_IS_ENTRY(child)) {
+            on_tab_rename_cancel(GTK_ENTRY(child), win);
+            break;
+          }
+          child = gtk_widget_get_next_sibling(child);
+        }
+      }
+    }
+  }
+
+  {
+    int old_idx;
+    GtkWidget *old_label, *new_label;
+    GtkNotebook *nb;
+
+    nb = GTK_NOTEBOOK(win->tab_bar);
+    old_idx = win->active_tab_idx;
+    if (old_idx >= 0 && (guint)old_idx < win->tabs->len) {
+      old_label = gtk_notebook_get_tab_label(
+          nb, gtk_notebook_get_nth_page(nb, old_idx));
+      if (old_label != NULL)
+        gtk_widget_set_size_request(old_label, 90, -1);
+    }
+    new_label = gtk_notebook_get_tab_label(
+        nb, gtk_notebook_get_nth_page(nb, (int)page_num));
+    if (new_label != NULL)
+      gtk_widget_set_size_request(new_label, 140, -1);
+  }
+
+  win->active_tab_idx = (int)page_num;
+  disarm_escape(win);
+
+  {
+    Tab *tab;
+
+    tab = g_ptr_array_index(win->tabs, page_num);
+    tab->has_unseen_output = FALSE;
+    tab_update_status_dot(tab);
+    apply_layout(tab);
+    set_prompt_focused(tab);
+    gtk_window_set_title(GTK_WINDOW(win->window), tab->name);
+  }
+}
+
+static void tab_switch_to(AppWindow *win, int idx) {
+  if (idx < 0 || idx >= (int)win->tabs->len)
+    return;
+  gtk_notebook_set_current_page(GTK_NOTEBOOK(win->tab_bar), idx);
+}
+
+static Tab *add_new_tab(AppWindow *win) {
+  Tab *tab;
+  GtkWidget *page;
+  GtkWidget *label_widget;
+  g_autofree char *name = NULL;
+  int idx;
+
+  name = g_strdup_printf("New Tab");
+  tab = tab_new(win, win->next_tab_id++, name);
+  tab->layout_mode = 0;
+  tab->marked_lines_str = g_strdup(runtime_config_get_string(
+      win->config, "marked_lines", DEFAULT_MARKED_LINES_STR));
+
+  g_ptr_array_add(win->tabs, tab);
+  idx = win->tabs->len - 1;
+
+  page = tab_create_widgets(tab, win);
+  label_widget = tab_create_label(tab, idx, win);
+
+  gtk_notebook_append_page(GTK_NOTEBOOK(win->tab_bar), page, label_widget);
+  (void)idx;
+  return tab;
+}
+
+static void close_tab(AppWindow *win, int idx) {
+  if (win->tabs->len <= 1) {
+    add_new_tab(win);
+    idx = win->tabs->len - 2;
+  }
+
+  if (idx < 0 || idx >= (int)win->tabs->len)
+    return;
+
+  g_ptr_array_remove_index(win->tabs, idx);
+  gtk_notebook_remove_page(GTK_NOTEBOOK(win->tab_bar), idx);
+
+  if (win->tabs->len == 0)
+    add_new_tab(win);
+
+  {
+    guint j;
+    GtkNotebook *nb;
+
+    nb = GTK_NOTEBOOK(win->tab_bar);
+    for (j = 0; j < (guint)gtk_notebook_get_n_pages(nb); j++) {
+      GtkWidget *lb;
+
+      lb =
+          gtk_notebook_get_tab_label(nb, gtk_notebook_get_nth_page(nb, (int)j));
+      if (lb != NULL)
+        g_object_set_data(G_OBJECT(lb), "tab-idx", GINT_TO_POINTER(j));
+    }
+  }
+
+  win->active_tab_idx =
+      gtk_notebook_get_current_page(GTK_NOTEBOOK(win->tab_bar));
+}
+
+static GdkContentProvider *on_tab_drag_prepare(GtkDragSource *source, double x,
+                                               double y, AppWindow *win) {
+  GtkWidget *label_box;
+  int idx;
+  char *value;
+
+  (void)win;
+  (void)x;
+  (void)y;
+
+  label_box = gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(source));
+  idx = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(label_box), "tab-idx"));
+  value = g_strdup_printf("%d", idx);
+  return gdk_content_provider_new_typed(G_TYPE_STRING, value);
+}
+
+static GdkDragAction on_tab_drop_motion(GtkDropTarget *drop, double x, double y,
+                                        AppWindow *win) {
+  guint i;
+  int n_pages;
+  GtkNotebook *nb;
+  graphene_rect_t bounds;
+  int target;
+
+  (void)drop;
+  (void)y;
+
+  nb = GTK_NOTEBOOK(win->tab_bar);
+  n_pages = gtk_notebook_get_n_pages(nb);
+  target = n_pages;
+
+  for (i = 0; i < (guint)n_pages; i++) {
+    GtkWidget *lp, *ll;
+
+    lp = gtk_notebook_get_nth_page(nb, (int)i);
+    ll = gtk_notebook_get_tab_label(nb, lp);
+    if (ll != NULL && gtk_widget_compute_bounds(ll, GTK_WIDGET(nb), &bounds)) {
+      if (x < bounds.origin.x + bounds.size.width / 2.0) {
+        target = (int)i;
+        break;
+      }
+    }
+  }
+
+  tab_drop_indicator(win, target);
+  return GDK_ACTION_MOVE;
+}
+
+static gboolean on_tab_drop(GtkDropTarget *drop, const GValue *value, double x,
+                            double y, AppWindow *win) {
+  int src_idx;
+  guint i;
+  int n_pages;
+  GtkNotebook *nb;
+  graphene_rect_t bounds;
+  int target;
+  GtkWidget *apage, *alabel;
+
+  (void)drop;
+  (void)y;
+
+  tab_drop_indicator(win, -1);
+  src_idx = atoi(g_value_get_string(value));
+
+  nb = GTK_NOTEBOOK(win->tab_bar);
+  n_pages = gtk_notebook_get_n_pages(nb);
+  target = n_pages;
+
+  for (i = 0; i < (guint)n_pages; i++) {
+    GtkWidget *lp, *ll;
+
+    lp = gtk_notebook_get_nth_page(nb, (int)i);
+    ll = gtk_notebook_get_tab_label(nb, lp);
+    if (ll != NULL && gtk_widget_compute_bounds(ll, GTK_WIDGET(nb), &bounds)) {
+      if (x < bounds.origin.x + bounds.size.width / 2.0) {
+        target = (int)i;
+        break;
+      }
+    }
+  }
+
+  if (target == src_idx || target == src_idx + 1)
+    return TRUE;
+
+  apage = gtk_notebook_get_nth_page(nb, src_idx);
+  alabel = gtk_notebook_get_tab_label(nb, apage);
+  g_object_ref(apage);
+  g_object_ref(alabel);
+
+  gtk_notebook_remove_page(nb, src_idx);
+
+  {
+    Tab *tab;
+
+    tab = g_ptr_array_index(win->tabs, src_idx);
+    g_ptr_array_steal_index(win->tabs, src_idx);
+
+    if (src_idx < target)
+      target--;
+
+    g_ptr_array_insert(win->tabs, target, tab);
+  }
+
+  gtk_notebook_insert_page(nb, apage, alabel, target);
+  gtk_notebook_set_current_page(nb, target);
+
+  {
+    int j;
+
+    for (j = 0; j < gtk_notebook_get_n_pages(nb); j++) {
+      GtkWidget *lb;
+
+      lb = gtk_notebook_get_tab_label(nb, gtk_notebook_get_nth_page(nb, j));
+      if (lb != NULL)
+        g_object_set_data(G_OBJECT(lb), "tab-idx", GINT_TO_POINTER(j));
+    }
+  }
+
+  g_object_unref(apage);
+  g_object_unref(alabel);
+  return TRUE;
+}
+
+static void on_tab_drop_leave(GtkDropTarget *drop, AppWindow *win) {
+  (void)drop;
+  (void)win;
+  tab_drop_indicator(win, -1);
+}
+
+static void on_tab_focus_leave(GtkEventControllerFocus *ctrl, AppWindow *win) {
+  GtkWidget *w;
+
+  w = gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(ctrl));
+  if (w != NULL && GTK_IS_ENTRY(w) &&
+      g_object_get_data(G_OBJECT(w), "rename-done") == NULL)
+    on_tab_rename_cancel(GTK_ENTRY(w), win);
+}
+
+static void on_new_tab_clicked(AppWindow *win) {
+  Tab *tab;
+
+  tab = add_new_tab(win);
+  gtk_notebook_set_current_page(GTK_NOTEBOOK(win->tab_bar), win->tabs->len - 1);
+  apply_layout(tab);
+  setup_tooltips(tab, win);
+  update_cmd_preview(tab);
+}
+
+static void on_tab_bar_double_click(GtkGestureClick *gesture, int n_press,
+                                    double x, double y, AppWindow *win) {
+  guint i;
+  int n_pages;
+  GtkNotebook *nb;
+  graphene_rect_t bounds;
+
+  (void)gesture;
+  (void)y;
+
+  if (n_press != 2)
+    return;
+
+  nb = GTK_NOTEBOOK(win->tab_bar);
+  n_pages = gtk_notebook_get_n_pages(nb);
+
+  for (i = 0; (int)i < n_pages; i++) {
+    GtkWidget *lp, *ll;
+
+    lp = gtk_notebook_get_nth_page(nb, (int)i);
+    ll = gtk_notebook_get_tab_label(nb, lp);
+    if (ll != NULL && gtk_widget_compute_bounds(ll, GTK_WIDGET(nb), &bounds)) {
+      if (x >= bounds.origin.x && x <= bounds.origin.x + bounds.size.width)
+        return;
+    }
+  }
+
+  on_new_tab_clicked(win);
+}
+
 static GtkWidget *create_status_bar(AppWindow *win) {
   GtkWidget *outer, *inner, *ver_label;
 
@@ -609,6 +1264,10 @@ static void _box_remove_all(GtkBox *box) {
 }
 
 static void apply_layout(Tab *tab) {
+  if (tab == NULL || !GTK_IS_PANED(tab->layout_paned) ||
+      !GTK_IS_BOX(tab->pane_left) || !GTK_IS_BOX(tab->pane_right) ||
+      !GTK_IS_BOX(tab->layout_popped))
+    return;
   _box_remove_all(GTK_BOX(tab->pane_left));
   _box_remove_all(GTK_BOX(tab->pane_right));
   _box_remove_all(GTK_BOX(tab->layout_popped));
@@ -821,6 +1480,10 @@ AppWindow *app_window_new(GtkApplication *app) {
   gtk_accelerator_parse(kb, &win->kb_layout_keyval, &win->kb_layout_mods);
   kb = runtime_config_get_string(win->config, "kb_popout", KB_POPOUT);
   gtk_accelerator_parse(kb, &win->kb_popout_keyval, &win->kb_popout_mods);
+  kb = runtime_config_get_string(win->config, "kb_new_tab", KB_NEW_TAB);
+  gtk_accelerator_parse(kb, &win->kb_new_tab_keyval, &win->kb_new_tab_mods);
+  kb = runtime_config_get_string(win->config, "kb_close_tab", KB_CLOSE_TAB);
+  gtk_accelerator_parse(kb, &win->kb_close_tab_keyval, &win->kb_close_tab_mods);
 
   {
     struct {
@@ -838,6 +1501,8 @@ AppWindow *app_window_new(GtkApplication *app) {
         {"cancel", win->kb_cancel_keyval, win->kb_cancel_mods},
         {"layout", win->kb_layout_keyval, win->kb_layout_mods},
         {"popout", win->kb_popout_keyval, win->kb_popout_mods},
+        {"new_tab", win->kb_new_tab_keyval, win->kb_new_tab_mods},
+        {"close_tab", win->kb_close_tab_keyval, win->kb_close_tab_mods},
     };
     gboolean conflict = FALSE;
     int n = (int)G_N_ELEMENTS(binds);
@@ -855,21 +1520,7 @@ AppWindow *app_window_new(GtkApplication *app) {
   }
 
   win->tabs = g_ptr_array_new_with_free_func((GDestroyNotify)tab_free);
-  tab = tab_new(win, 0, "main");
-  g_ptr_array_add(win->tabs, tab);
-  win->active_tab_idx = 0;
   win->next_tab_id = 1;
-
-  tab->marked_lines_str = runtime_config_get_string(win->config, "marked_lines",
-                                                    DEFAULT_MARKED_LINES_STR);
-
-  {
-    g_autofree char *layout_mode;
-
-    layout_mode =
-        runtime_config_get_string(win->config, "layout", LAYOUT_DEFAULT);
-    tab->layout_mode = (g_strcmp0(layout_mode, "vertical") == 0) ? 1 : 0;
-  }
 
   win->window = gtk_window_new();
   gtk_window_set_application(GTK_WINDOW(win->window), app);
@@ -915,20 +1566,6 @@ AppWindow *app_window_new(GtkApplication *app) {
   main_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
   gtk_window_set_child(GTK_WINDOW(win->window), main_box);
 
-  tab->prompt_section = create_prompt_section(tab, win);
-  tab->fu_row = create_follow_up_row(tab, win);
-  tab->agent_row = create_agent_row(tab, win);
-  tab->output_section = create_output_section(tab, win);
-  tab->marked_row = create_marked_row(tab, win);
-  tab->action_row = create_action_row(tab, win);
-
-  g_object_ref_sink(tab->prompt_section);
-  g_object_ref_sink(tab->fu_row);
-  g_object_ref_sink(tab->agent_row);
-  g_object_ref_sink(tab->output_section);
-  g_object_ref_sink(tab->marked_row);
-  g_object_ref_sink(tab->action_row);
-
   win->cmd_label = gtk_text_view_new();
   gtk_text_view_set_editable(GTK_TEXT_VIEW(win->cmd_label), FALSE);
   gtk_text_view_set_cursor_visible(GTK_TEXT_VIEW(win->cmd_label), FALSE);
@@ -939,97 +1576,61 @@ AppWindow *app_window_new(GtkApplication *app) {
   gtk_widget_set_hexpand(win->cmd_label, TRUE);
   gtk_widget_add_css_class(win->cmd_label, "monospace");
 
-  log_append(win, "session → started");
+  log_append(win, "session \xe2\x86\x92 started");
 
   status_bar_widget = create_status_bar(win);
 
+  win->tab_bar = gtk_notebook_new();
+  gtk_notebook_set_scrollable(GTK_NOTEBOOK(win->tab_bar), TRUE);
+  gtk_widget_set_vexpand(win->tab_bar, TRUE);
+
   {
-    GtkWidget *tab_bar_box;
+    GtkDropTarget *drop;
 
-    win->tab_bar = gtk_scrolled_window_new();
-    gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(win->tab_bar),
-                                   GTK_POLICY_AUTOMATIC, GTK_POLICY_NEVER);
-    gtk_scrolled_window_set_propagate_natural_height(
-        GTK_SCROLLED_WINDOW(win->tab_bar), TRUE);
+    drop = gtk_drop_target_new(G_TYPE_STRING, GDK_ACTION_MOVE);
+    g_signal_connect(drop, "motion", G_CALLBACK(on_tab_drop_motion), win);
+    g_signal_connect(drop, "drop", G_CALLBACK(on_tab_drop), win);
+    g_signal_connect(drop, "leave", G_CALLBACK(on_tab_drop_leave), win);
+    gtk_widget_add_controller(win->tab_bar, GTK_EVENT_CONTROLLER(drop));
+  }
 
-    tab_bar_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
-    gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(win->tab_bar),
-                                  tab_bar_box);
-    {
-      GtkWidget *btn, *box, *label, *close_btn;
+  {
+    GtkGesture *click;
 
-      btn = gtk_toggle_button_new();
-      gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(btn), TRUE);
-      gtk_widget_add_css_class(btn, "tab-button");
-
-      box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4);
-      gtk_widget_set_margin_start(box, 4);
-      gtk_widget_set_margin_end(box, 4);
-      gtk_widget_set_margin_top(box, 4);
-      gtk_widget_set_margin_bottom(box, 4);
-
-      label = gtk_label_new("main");
-      gtk_label_set_xalign(GTK_LABEL(label), 0.0f);
-      gtk_box_append(GTK_BOX(box), label);
-
-      close_btn = gtk_button_new_with_label("×");
-      gtk_widget_add_css_class(close_btn, "tab-close-btn");
-      gtk_widget_set_margin_start(close_btn, 4);
-      gtk_box_append(GTK_BOX(box), close_btn);
-
-      gtk_box_append(GTK_BOX(box), btn);
-      gtk_box_append(GTK_BOX(tab_bar_box), btn);
-    }
-    {
-      GtkWidget *add_btn;
-
-      add_btn = gtk_button_new_with_label("+");
-      gtk_widget_add_css_class(add_btn, "tab-add-btn");
-      gtk_widget_set_margin_start(add_btn, 4);
-      gtk_widget_set_margin_end(add_btn, 8);
-      gtk_widget_set_margin_top(add_btn, 4);
-      gtk_widget_set_margin_bottom(add_btn, 4);
-      gtk_box_append(GTK_BOX(tab_bar_box), add_btn);
-    }
+    click = gtk_gesture_click_new();
+    gtk_event_controller_set_propagation_phase(GTK_EVENT_CONTROLLER(click),
+                                               GTK_PHASE_BUBBLE);
+    g_signal_connect(click, "pressed", G_CALLBACK(on_tab_bar_double_click),
+                     win);
+    gtk_widget_add_controller(win->tab_bar, GTK_EVENT_CONTROLLER(click));
   }
 
   gtk_box_append(GTK_BOX(main_box), win->tab_bar);
-
-  {
-    tab->content_stack = gtk_stack_new();
-    gtk_stack_set_vhomogeneous(GTK_STACK(tab->content_stack), FALSE);
-    gtk_widget_set_vexpand(tab->content_stack, TRUE);
-    gtk_box_append(GTK_BOX(main_box), tab->content_stack);
-
-    tab->layout_paned = gtk_paned_new(GTK_ORIENTATION_VERTICAL);
-    gtk_stack_add_named(GTK_STACK(tab->content_stack), tab->layout_paned,
-                        "paned");
-
-    tab->pane_left = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4);
-    tab->pane_right = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4);
-    g_object_ref_sink(tab->pane_left);
-    g_object_ref_sink(tab->pane_right);
-
-    tab->layout_popped = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
-    gtk_widget_set_margin_start(tab->layout_popped, 12);
-    gtk_widget_set_margin_end(tab->layout_popped, 12);
-    gtk_widget_set_margin_top(tab->layout_popped, 12);
-    gtk_widget_set_vexpand(tab->layout_popped, TRUE);
-    gtk_stack_add_named(GTK_STACK(tab->content_stack), tab->layout_popped,
-                        "popped");
-  }
-
   gtk_box_append(GTK_BOX(main_box), status_bar_widget);
 
+  g_signal_connect(win->tab_bar, "switch-page",
+                   G_CALLBACK(on_notebook_page_switched), win);
+
+  {
+    GtkWidget *add_btn;
+
+    add_btn = gtk_button_new_with_label("+");
+    gtk_widget_add_css_class(add_btn, "tab-add-btn");
+    g_signal_connect_swapped(add_btn, "clicked", G_CALLBACK(on_new_tab_clicked),
+                             win);
+    gtk_notebook_set_action_widget(GTK_NOTEBOOK(win->tab_bar), add_btn,
+                                   GTK_PACK_START);
+  }
+
+  tab = add_new_tab(win);
+  gtk_notebook_set_current_page(GTK_NOTEBOOK(win->tab_bar), 0);
   setup_tooltips(tab, win);
   apply_layout(tab);
-
   app_window_restore_state(win);
   update_cmd_preview(tab);
 
   return win;
 }
-
 void app_window_show(AppWindow *win) {
   Tab *tab = app_window_get_active_tab(win);
 
@@ -1143,6 +1744,7 @@ static void set_loading_state(Tab *tab, const char *cmd) {
 
   tab->state = STATE_LOADING;
   set_load_state_common(tab);
+  tab_update_status_dot(tab);
 
   log_append(win, "submit → %s%s", tab->follow_up_active ? "[follow-up] " : "",
              cmd);
@@ -1163,6 +1765,12 @@ static void set_finished_state(Tab *tab, char *cmd, gint64 elapsed,
   disarm_escape(win);
   set_load_state_uncommon(tab);
   tab->state = STATE_FINISHED;
+
+  if (app_window_get_active_tab(win) != tab)
+    tab->has_unseen_output = TRUE;
+  else
+    tab->has_unseen_output = FALSE;
+  tab_update_status_dot(tab);
 
   set_status_text(win, "Ready");
 
@@ -1218,6 +1826,7 @@ static void set_canceled_state(Tab *tab, char *cmd) {
   set_load_state_uncommon(tab);
   tab->state = STATE_CANCELED;
 
+  tab_update_status_dot(tab);
   set_status_text(win, "Interrupted");
   g_timeout_add(2000, (GSourceFunc)status_pop_cb, win->status_bar);
 
@@ -1237,6 +1846,12 @@ static void set_errored_state(Tab *tab, char *cmd, const char *stderr_output) {
   disarm_escape(win);
   set_load_state_uncommon(tab);
   tab->state = STATE_FINISHED;
+
+  if (app_window_get_active_tab(win) != tab)
+    tab->has_unseen_output = TRUE;
+  else
+    tab->has_unseen_output = FALSE;
+  tab_update_status_dot(tab);
 
   set_status_text(win, "Ready");
 
@@ -1917,6 +2532,31 @@ static gboolean on_window_key_pressed(GtkEventControllerKey *controller,
     return GDK_EVENT_STOP;
   }
 
+  /* ctrl+t: new tab */
+  if (win->kb_new_tab_keyval != 0 && keyval == win->kb_new_tab_keyval &&
+      mods == win->kb_new_tab_mods) {
+    on_new_tab_clicked(win);
+    return GDK_EVENT_STOP;
+  }
+
+  /* ctrl+w: close current tab */
+  if (win->kb_close_tab_keyval != 0 && keyval == win->kb_close_tab_keyval &&
+      mods == win->kb_close_tab_mods) {
+    if (tab != NULL)
+      close_tab(win, win->active_tab_idx);
+    return GDK_EVENT_STOP;
+  }
+
+  /* alt+1..9: switch to tab */
+  if (keyval >= GDK_KEY_1 && keyval <= GDK_KEY_9 && mods == GDK_ALT_MASK) {
+    int idx;
+
+    idx = (int)(keyval - GDK_KEY_1);
+    if (idx < (int)win->tabs->len)
+      tab_switch_to(win, idx);
+    return GDK_EVENT_STOP;
+  }
+
   return GDK_EVENT_PROPAGATE;
 }
 
@@ -2087,6 +2727,29 @@ static void status_bar_on_hover(GtkWidget *widget, AppWindow *win,
   g_signal_connect(motion, "leave", G_CALLBACK(hover_leave_cb), win);
 
   gtk_widget_add_controller(widget, motion);
+}
+
+static void on_prompt_focus_changed(GObject *object, GParamSpec *pspec,
+                                    gpointer user_data) {
+  AppWindow *win;
+  Tab *tab;
+  GtkEntry *entry;
+
+  (void)pspec;
+
+  if (!gtk_widget_has_focus(GTK_WIDGET(object)))
+    return;
+
+  win = user_data;
+  tab = app_window_get_active_tab(win);
+  if (tab == NULL || tab->rename_entry == NULL)
+    return;
+
+  entry = GTK_ENTRY(tab->rename_entry);
+  if (!GTK_IS_ENTRY(entry))
+    return;
+
+  on_tab_rename_cancel(entry, win);
 }
 
 static void set_prompt_focused(Tab *tab) {
@@ -2550,6 +3213,56 @@ static void load_css(int prompt_font_size, int output_font_size) {
   if (output_font_size > 0)
     g_string_append_printf(css, "textview.output-font { font-size: %dpt; }",
                            output_font_size);
+
+  g_string_append(css, "notebook tab {"
+                       "  background-color: alpha(currentColor, 0.03);"
+                       "  border-top: 1px solid @borders;"
+                       "  border-left: 1px solid @borders;"
+                       "  border-right: 1px solid @borders;"
+                       "  border-bottom: none;"
+                       "  border-radius: 6px 6px 0 0;"
+                       "}"
+                       "notebook tab:checked {"
+                       "  background-color: @theme_bg_color;"
+                       "  border-bottom: 2px solid alpha(currentColor, 0.15);"
+                       "}"
+                       ".tab-close-btn {"
+                       "  min-width: 20px;"
+                       "  min-height: 20px;"
+                       "  padding: 0;"
+                       "  color: white;"
+                       "  background-color: alpha(currentColor, 0.12);"
+                       "  border-radius: 3px;"
+                       "}"
+                       "notebook tab:checked .tab-close-btn {"
+                       "  background-color: #c42b1c;"
+                       "}"
+                       ".tab-close-btn:hover {"
+                       "  background-color: #e03a2a;"
+                       "}"
+                       ".tab-drop-target {"
+                       "  border-left: 3px solid #3584e4;"
+                       "}"
+                       ".tab-status-dot {"
+                       "  font-size: 0.6em;"
+                       "  color: alpha(currentColor, 0.2);"
+                       "}"
+                       ".tab-status-dot.loading {"
+                       "  color: #e5a50a;"
+                       "}"
+                       ".tab-status-dot.finished {"
+                       "  color: #33cc7f;"
+                       "}"
+                       ".tab-add-btn {"
+                       "  background: none;"
+                       "  border: none;"
+                       "  border-radius: 4px;"
+                       "  font-size: 1.1em;"
+                       "  color: @theme_fg_color;"
+                       "}"
+                       ".tab-add-btn:hover {"
+                       "  background-color: alpha(currentColor, 0.08);"
+                       "}");
 
   provider = gtk_css_provider_new();
   gtk_css_provider_load_from_string(provider, css->str);
