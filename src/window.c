@@ -24,19 +24,18 @@ static void on_copy(AppWindow *win);
 static void on_close(AppWindow *win);
 static void on_quit(AppWindow *win);
 static void on_follow_up_toggled(AppWindow *win);
-static void update_submit_sensitivity(AppWindow *win);
+static void update_submit_sensitivity(Tab *tab);
 static char *get_trimmed_text(GtkWidget *text_view);
 static char *get_selected_text(GtkWidget *dropdown);
-static void set_prompt_focused(AppWindow *win);
+static void set_prompt_focused(Tab *tab);
 
-static void set_loading_state(AppWindow *win, const char *cmd);
-static void set_finished_state(AppWindow *win, char *cmd, gint64 elapsed,
+static void set_loading_state(Tab *tab, const char *cmd);
+static void set_finished_state(Tab *tab, char *cmd, gint64 elapsed,
                                const char *output);
-static void set_canceled_state(AppWindow *win, char *cmd);
-static void set_errored_state(AppWindow *win, char *cmd,
-                              const char *stderr_output);
+static void set_canceled_state(Tab *tab, char *cmd);
+static void set_errored_state(Tab *tab, char *cmd, const char *stderr_output);
 
-static void command_finished_cb(AppWindow *win, const char *output,
+static void command_finished_cb(Tab *tab, const char *output,
                                 const char *stderr_output, gint64 elapsed,
                                 int exit_code, gboolean exited_cleanly);
 
@@ -53,26 +52,26 @@ static gboolean on_close_request(GtkWindow *window, gpointer user_data);
 static void on_prompt_changed(GtkTextBuffer *buffer, AppWindow *win);
 static void on_dropdown_changed(GObject *self, GParamSpec *pspec,
                                 AppWindow *win);
-static void update_cmd_preview(AppWindow *win);
+static void update_cmd_preview(Tab *tab);
 static void on_log(AppWindow *win);
 static void on_log_close(AppWindow *win);
 static void on_shortcuts(AppWindow *win);
 static void on_shortcuts_close(AppWindow *win);
 
 /* Fwd: layout helpers */
-static GtkWidget *create_prompt_section(AppWindow *win);
-static GtkWidget *create_follow_up_row(AppWindow *win);
-static GtkWidget *create_agent_row(AppWindow *win);
-static GtkWidget *create_output_section(AppWindow *win);
-static GtkWidget *create_marked_row(AppWindow *win);
-static GtkWidget *create_action_row(AppWindow *win);
+static GtkWidget *create_prompt_section(Tab *tab, AppWindow *win);
+static GtkWidget *create_follow_up_row(Tab *tab, AppWindow *win);
+static GtkWidget *create_agent_row(Tab *tab, AppWindow *win);
+static GtkWidget *create_output_section(Tab *tab, AppWindow *win);
+static GtkWidget *create_marked_row(Tab *tab, AppWindow *win);
+static GtkWidget *create_action_row(Tab *tab, AppWindow *win);
 static GtkWidget *create_status_bar(AppWindow *win);
-static void setup_tooltips(AppWindow *win);
-static void apply_layout(AppWindow *win);
-static void toggle_popout(AppWindow *win);
+static void setup_tooltips(Tab *tab, AppWindow *win);
+static void apply_layout(Tab *tab);
+static void toggle_popout(Tab *tab);
 struct PopupEscCtx {
-  AppWindow *win;
-  void (*close_fn)(AppWindow *);
+  gpointer data;
+  void (*close_fn)(gpointer);
 };
 
 static gboolean on_popup_esc(GtkEventControllerKey *ctrl, guint keyval,
@@ -84,7 +83,7 @@ static gboolean on_popup_esc(GtkEventControllerKey *ctrl, guint keyval,
   (void)keycode;
   (void)state;
   if (keyval == GDK_KEY_Escape) {
-    ctx->close_fn(ctx->win);
+    ctx->close_fn(ctx->data);
     return GDK_EVENT_STOP;
   }
   return GDK_EVENT_PROPAGATE;
@@ -101,9 +100,9 @@ static void log_append(AppWindow *win, const char *fmt, ...)
 static gboolean hex_to_rgba(const char *hex, GdkRGBA *out);
 static void on_gutter_click(GtkGestureClick *gesture, int n_press, double x,
                             double y, AppWindow *win);
-static void update_marked_label(AppWindow *win);
-static void apply_default_marks(AppWindow *win, GtkTextBuffer *buf);
-static char *get_marked_text(AppWindow *win);
+static void update_marked_label(Tab *tab);
+static void apply_default_marks(Tab *tab, GtkTextBuffer *buf);
+static char *get_marked_text(Tab *tab);
 static char *accel_to_human(const char *accel);
 static void status_bar_on_hover(GtkWidget *widget, AppWindow *win,
                                 const char *text);
@@ -116,7 +115,7 @@ static void load_css(int prompt_font_size, int output_font_size);
 
 /* ── layout helpers ─────────────────────────────────────────────── */
 
-static GtkWidget *create_prompt_section(AppWindow *win) {
+static GtkWidget *create_prompt_section(Tab *tab, AppWindow *win) {
   GtkWidget *box, *scroll, *overlay, *label, *hdr;
   g_autofree char *prompt_text = NULL;
   g_autofree char *kb_human = NULL;
@@ -151,18 +150,18 @@ static GtkWidget *create_prompt_section(AppWindow *win) {
     gtk_widget_set_halign(btns, GTK_ALIGN_END);
     gtk_widget_set_valign(btns, GTK_ALIGN_CENTER);
 
-    win->log_btn_top = gtk_button_new_with_label("Log...");
-    g_signal_connect_swapped(win->log_btn_top, "clicked", G_CALLBACK(on_log),
+    tab->log_btn_top = gtk_button_new_with_label("Log...");
+    g_signal_connect_swapped(tab->log_btn_top, "clicked", G_CALLBACK(on_log),
                              win);
-    gtk_box_append(GTK_BOX(btns), win->log_btn_top);
+    gtk_box_append(GTK_BOX(btns), tab->log_btn_top);
 
-    win->shortcuts_btn_top = gtk_button_new_with_label("Shortcuts...");
-    g_signal_connect_swapped(win->shortcuts_btn_top, "clicked",
+    tab->shortcuts_btn_top = gtk_button_new_with_label("Shortcuts...");
+    g_signal_connect_swapped(tab->shortcuts_btn_top, "clicked",
                              G_CALLBACK(on_shortcuts), win);
-    gtk_box_append(GTK_BOX(btns), win->shortcuts_btn_top);
+    gtk_box_append(GTK_BOX(btns), tab->shortcuts_btn_top);
 
     gtk_box_append(GTK_BOX(hdr), btns);
-    win->prompt_btns = btns;
+    tab->prompt_btns = btns;
   }
 
   gtk_box_append(GTK_BOX(box), hdr);
@@ -175,16 +174,16 @@ static GtkWidget *create_prompt_section(AppWindow *win) {
                                                    TRUE);
   gtk_widget_set_vexpand(scroll, TRUE);
 
-  win->prompt_view = GTK_WIDGET(gtk_source_view_new());
-  gtk_source_view_set_show_line_numbers(GTK_SOURCE_VIEW(win->prompt_view),
+  tab->prompt_view = GTK_WIDGET(gtk_source_view_new());
+  gtk_source_view_set_show_line_numbers(GTK_SOURCE_VIEW(tab->prompt_view),
                                         TRUE);
-  gtk_text_view_set_wrap_mode(GTK_TEXT_VIEW(win->prompt_view),
+  gtk_text_view_set_wrap_mode(GTK_TEXT_VIEW(tab->prompt_view),
                               GTK_WRAP_WORD_CHAR);
-  gtk_text_view_set_left_margin(GTK_TEXT_VIEW(win->prompt_view), 10);
-  gtk_text_view_set_top_margin(GTK_TEXT_VIEW(win->prompt_view), 4);
-  gtk_widget_add_css_class(win->prompt_view, "monospace");
-  gtk_widget_add_css_class(win->prompt_view, "prompt-font");
-  gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scroll), win->prompt_view);
+  gtk_text_view_set_left_margin(GTK_TEXT_VIEW(tab->prompt_view), 10);
+  gtk_text_view_set_top_margin(GTK_TEXT_VIEW(tab->prompt_view), 4);
+  gtk_widget_add_css_class(tab->prompt_view, "monospace");
+  gtk_widget_add_css_class(tab->prompt_view, "prompt-font");
+  gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scroll), tab->prompt_view);
 
   {
     GtkWidget *plabel;
@@ -204,7 +203,7 @@ static GtkWidget *create_prompt_section(AppWindow *win) {
     gtk_widget_add_css_class(plabel, "prompt-font");
     gtk_widget_set_can_target(plabel, FALSE);
     gtk_overlay_add_overlay(GTK_OVERLAY(overlay), plabel);
-    win->placeholder_label = plabel;
+    tab->placeholder_label = plabel;
   }
 
   gtk_box_append(GTK_BOX(box), overlay);
@@ -213,11 +212,11 @@ static GtkWidget *create_prompt_section(AppWindow *win) {
     GtkTextBuffer *buffer;
     GtkEventController *key_ctrl;
 
-    buffer = gtk_text_view_get_buffer(GTK_TEXT_VIEW(win->prompt_view));
+    buffer = gtk_text_view_get_buffer(GTK_TEXT_VIEW(tab->prompt_view));
     g_signal_connect(buffer, "changed", G_CALLBACK(on_prompt_changed), win);
 
     key_ctrl = gtk_event_controller_key_new();
-    gtk_widget_add_controller(win->prompt_view, key_ctrl);
+    gtk_widget_add_controller(tab->prompt_view, key_ctrl);
     g_signal_connect(key_ctrl, "key-pressed", G_CALLBACK(on_prompt_key_pressed),
                      win);
   }
@@ -225,24 +224,24 @@ static GtkWidget *create_prompt_section(AppWindow *win) {
   return box;
 }
 
-static GtkWidget *create_follow_up_row(AppWindow *win) {
+static GtkWidget *create_follow_up_row(Tab *tab, AppWindow *win) {
   GtkWidget *furow;
 
   furow = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
   gtk_widget_set_margin_top(furow, 4);
   gtk_widget_set_margin_bottom(furow, 4);
 
-  win->follow_up_check =
+  tab->follow_up_check =
       gtk_check_button_new_with_label("This prompt is a follow up");
-  gtk_widget_set_sensitive(win->follow_up_check, FALSE);
-  g_signal_connect_swapped(win->follow_up_check, "toggled",
+  gtk_widget_set_sensitive(tab->follow_up_check, FALSE);
+  g_signal_connect_swapped(tab->follow_up_check, "toggled",
                            G_CALLBACK(on_follow_up_toggled), win);
-  gtk_box_append(GTK_BOX(furow), win->follow_up_check);
+  gtk_box_append(GTK_BOX(furow), tab->follow_up_check);
 
   return furow;
 }
 
-static GtkWidget *create_agent_row(AppWindow *win) {
+static GtkWidget *create_agent_row(Tab *tab, AppWindow *win) {
   GtkWidget *row, *label, *filler;
   GtkStringList *list;
   g_autofree char **opts = NULL;
@@ -267,12 +266,12 @@ static GtkWidget *create_agent_row(AppWindow *win) {
     has_options = TRUE;
   }
   has_options = (i > 1);
-  win->agent_dropdown = gtk_drop_down_new(G_LIST_MODEL(list), NULL);
-  gtk_drop_down_set_selected(GTK_DROP_DOWN(win->agent_dropdown), 0);
-  gtk_widget_set_sensitive(win->agent_dropdown, has_options);
-  g_signal_connect(win->agent_dropdown, "notify::selected",
+  tab->agent_dropdown = gtk_drop_down_new(G_LIST_MODEL(list), NULL);
+  gtk_drop_down_set_selected(GTK_DROP_DOWN(tab->agent_dropdown), 0);
+  gtk_widget_set_sensitive(tab->agent_dropdown, has_options);
+  g_signal_connect(tab->agent_dropdown, "notify::selected",
                    G_CALLBACK(on_dropdown_changed), win);
-  gtk_box_append(GTK_BOX(row), win->agent_dropdown);
+  gtk_box_append(GTK_BOX(row), tab->agent_dropdown);
   g_strfreev(opts);
   opts = NULL;
 
@@ -290,35 +289,35 @@ static GtkWidget *create_agent_row(AppWindow *win) {
     has_options = TRUE;
   }
   has_options = (i > 1);
-  win->model_dropdown = gtk_drop_down_new(G_LIST_MODEL(list), NULL);
-  gtk_drop_down_set_selected(GTK_DROP_DOWN(win->model_dropdown), 0);
-  gtk_widget_set_sensitive(win->model_dropdown, has_options);
-  g_signal_connect(win->model_dropdown, "notify::selected",
+  tab->model_dropdown = gtk_drop_down_new(G_LIST_MODEL(list), NULL);
+  gtk_drop_down_set_selected(GTK_DROP_DOWN(tab->model_dropdown), 0);
+  gtk_widget_set_sensitive(tab->model_dropdown, has_options);
+  g_signal_connect(tab->model_dropdown, "notify::selected",
                    G_CALLBACK(on_dropdown_changed), win);
-  gtk_box_append(GTK_BOX(row), win->model_dropdown);
+  gtk_box_append(GTK_BOX(row), tab->model_dropdown);
   g_strfreev(opts);
 
-  win->submit_btn = gtk_button_new_with_label("Submit");
-  gtk_widget_set_margin_start(win->submit_btn, 8);
-  gtk_widget_add_css_class(win->submit_btn, "suggested-action");
-  gtk_widget_set_sensitive(win->submit_btn, FALSE);
-  g_signal_connect_swapped(win->submit_btn, "clicked", G_CALLBACK(on_submit),
+  tab->submit_btn = gtk_button_new_with_label("Submit");
+  gtk_widget_set_margin_start(tab->submit_btn, 8);
+  gtk_widget_add_css_class(tab->submit_btn, "suggested-action");
+  gtk_widget_set_sensitive(tab->submit_btn, FALSE);
+  g_signal_connect_swapped(tab->submit_btn, "clicked", G_CALLBACK(on_submit),
                            win);
-  gtk_box_append(GTK_BOX(row), win->submit_btn);
+  gtk_box_append(GTK_BOX(row), tab->submit_btn);
 
-  win->spinner = gtk_spinner_new();
-  gtk_widget_set_visible(win->spinner, FALSE);
-  gtk_widget_set_margin_start(win->spinner, 8);
-  gtk_widget_set_valign(win->spinner, GTK_ALIGN_CENTER);
-  gtk_box_append(GTK_BOX(row), win->spinner);
+  tab->spinner = gtk_spinner_new();
+  gtk_widget_set_visible(tab->spinner, FALSE);
+  gtk_widget_set_margin_start(tab->spinner, 8);
+  gtk_widget_set_valign(tab->spinner, GTK_ALIGN_CENTER);
+  gtk_box_append(GTK_BOX(row), tab->spinner);
 
-  win->cancel_btn = gtk_button_new_with_label("Cancel");
-  gtk_widget_set_valign(win->cancel_btn, GTK_ALIGN_CENTER);
-  gtk_widget_set_margin_start(win->cancel_btn, 8);
-  gtk_widget_set_visible(win->cancel_btn, FALSE);
-  g_signal_connect_swapped(win->cancel_btn, "clicked", G_CALLBACK(on_cancel),
+  tab->cancel_btn = gtk_button_new_with_label("Cancel");
+  gtk_widget_set_valign(tab->cancel_btn, GTK_ALIGN_CENTER);
+  gtk_widget_set_margin_start(tab->cancel_btn, 8);
+  gtk_widget_set_visible(tab->cancel_btn, FALSE);
+  g_signal_connect_swapped(tab->cancel_btn, "clicked", G_CALLBACK(on_cancel),
                            win);
-  gtk_box_append(GTK_BOX(row), win->cancel_btn);
+  gtk_box_append(GTK_BOX(row), tab->cancel_btn);
 
   filler = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
   gtk_widget_set_hexpand(filler, TRUE);
@@ -329,25 +328,25 @@ static GtkWidget *create_agent_row(AppWindow *win) {
 
     btns = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
 
-    win->log_btn = gtk_button_new_with_label("Log...");
-    gtk_widget_set_valign(win->log_btn, GTK_ALIGN_CENTER);
-    g_signal_connect_swapped(win->log_btn, "clicked", G_CALLBACK(on_log), win);
-    gtk_box_append(GTK_BOX(btns), win->log_btn);
+    tab->log_btn = gtk_button_new_with_label("Log...");
+    gtk_widget_set_valign(tab->log_btn, GTK_ALIGN_CENTER);
+    g_signal_connect_swapped(tab->log_btn, "clicked", G_CALLBACK(on_log), win);
+    gtk_box_append(GTK_BOX(btns), tab->log_btn);
 
-    win->shortcuts_btn = gtk_button_new_with_label("Shortcuts...");
-    gtk_widget_set_valign(win->shortcuts_btn, GTK_ALIGN_CENTER);
-    g_signal_connect_swapped(win->shortcuts_btn, "clicked",
+    tab->shortcuts_btn = gtk_button_new_with_label("Shortcuts...");
+    gtk_widget_set_valign(tab->shortcuts_btn, GTK_ALIGN_CENTER);
+    g_signal_connect_swapped(tab->shortcuts_btn, "clicked",
                              G_CALLBACK(on_shortcuts), win);
-    gtk_box_append(GTK_BOX(btns), win->shortcuts_btn);
+    gtk_box_append(GTK_BOX(btns), tab->shortcuts_btn);
 
     gtk_box_append(GTK_BOX(row), btns);
-    win->agent_btns = btns;
+    tab->agent_btns = btns;
   }
 
   return row;
 }
 
-static GtkWidget *create_output_section(AppWindow *win) {
+static GtkWidget *create_output_section(Tab *tab, AppWindow *win) {
   GtkWidget *box, *scroll, *popout_btn;
   GdkRGBA c;
   g_autofree char *color;
@@ -360,21 +359,21 @@ static GtkWidget *create_output_section(AppWindow *win) {
     hdr = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
     gtk_widget_set_hexpand(hdr, TRUE);
 
-    win->output_label = gtk_label_new("Output");
-    gtk_label_set_xalign(GTK_LABEL(win->output_label), 0.0f);
-    gtk_widget_set_margin_top(win->output_label, 8);
-    gtk_widget_set_margin_bottom(win->output_label, 4);
-    gtk_widget_set_hexpand(win->output_label, TRUE);
-    gtk_box_append(GTK_BOX(hdr), win->output_label);
+    tab->output_label = gtk_label_new("Output");
+    gtk_label_set_xalign(GTK_LABEL(tab->output_label), 0.0f);
+    gtk_widget_set_margin_top(tab->output_label, 8);
+    gtk_widget_set_margin_bottom(tab->output_label, 4);
+    gtk_widget_set_hexpand(tab->output_label, TRUE);
+    gtk_box_append(GTK_BOX(hdr), tab->output_label);
 
     popout_btn = gtk_button_new_with_label("Undock...");
     gtk_widget_set_tooltip_text(popout_btn, "Pop out output (ctrl+o)");
     gtk_widget_set_halign(popout_btn, GTK_ALIGN_END);
     gtk_widget_set_valign(popout_btn, GTK_ALIGN_CENTER);
     g_signal_connect_swapped(popout_btn, "clicked", G_CALLBACK(toggle_popout),
-                             win);
+                             tab);
     gtk_box_append(GTK_BOX(hdr), popout_btn);
-    win->popout_btn = popout_btn;
+    tab->popout_btn = popout_btn;
 
     gtk_box_append(GTK_BOX(box), hdr);
   }
@@ -385,18 +384,18 @@ static GtkWidget *create_output_section(AppWindow *win) {
   gtk_scrolled_window_set_min_content_height(GTK_SCROLLED_WINDOW(scroll), 60);
   gtk_widget_set_vexpand(scroll, TRUE);
 
-  win->output_view = GTK_WIDGET(gtk_source_view_new());
-  gtk_text_view_set_editable(GTK_TEXT_VIEW(win->output_view), FALSE);
-  gtk_text_view_set_cursor_visible(GTK_TEXT_VIEW(win->output_view), FALSE);
-  gtk_text_view_set_wrap_mode(GTK_TEXT_VIEW(win->output_view),
+  tab->output_view = GTK_WIDGET(gtk_source_view_new());
+  gtk_text_view_set_editable(GTK_TEXT_VIEW(tab->output_view), FALSE);
+  gtk_text_view_set_cursor_visible(GTK_TEXT_VIEW(tab->output_view), FALSE);
+  gtk_text_view_set_wrap_mode(GTK_TEXT_VIEW(tab->output_view),
                               GTK_WRAP_WORD_CHAR);
-  gtk_text_view_set_left_margin(GTK_TEXT_VIEW(win->output_view), 2);
-  gtk_text_view_set_top_margin(GTK_TEXT_VIEW(win->output_view), 4);
-  gtk_source_view_set_show_line_numbers(GTK_SOURCE_VIEW(win->output_view),
+  gtk_text_view_set_left_margin(GTK_TEXT_VIEW(tab->output_view), 2);
+  gtk_text_view_set_top_margin(GTK_TEXT_VIEW(tab->output_view), 4);
+  gtk_source_view_set_show_line_numbers(GTK_SOURCE_VIEW(tab->output_view),
                                         TRUE);
-  gtk_widget_add_css_class(win->output_view, "monospace");
-  gtk_widget_add_css_class(win->output_view, "output-font");
-  gtk_source_view_set_show_line_marks(GTK_SOURCE_VIEW(win->output_view), TRUE);
+  gtk_widget_add_css_class(tab->output_view, "monospace");
+  gtk_widget_add_css_class(tab->output_view, "output-font");
+  gtk_source_view_set_show_line_marks(GTK_SOURCE_VIEW(tab->output_view), TRUE);
 
   color =
       runtime_config_get_string(win->config, "mark_bg_color", MARK_BG_COLOR);
@@ -407,7 +406,7 @@ static GtkWidget *create_output_section(AppWindow *win) {
     attrs = gtk_source_mark_attributes_new();
     gtk_source_mark_attributes_set_background(attrs, &c);
     gtk_source_mark_attributes_set_icon_name(attrs, "media-record-symbolic");
-    gtk_source_view_set_mark_attributes(GTK_SOURCE_VIEW(win->output_view),
+    gtk_source_view_set_mark_attributes(GTK_SOURCE_VIEW(tab->output_view),
                                         "promptr-mark", attrs, 0);
   }
 
@@ -419,56 +418,58 @@ static GtkWidget *create_output_section(AppWindow *win) {
                                                GTK_PHASE_CAPTURE);
     gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(gesture),
                                   GDK_BUTTON_PRIMARY);
-    gtk_widget_add_controller(win->output_view, GTK_EVENT_CONTROLLER(gesture));
+    gtk_widget_add_controller(tab->output_view, GTK_EVENT_CONTROLLER(gesture));
     g_signal_connect(gesture, "pressed", G_CALLBACK(on_gutter_click), win);
   }
 
-  gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scroll), win->output_view);
-  win->output_scroll = scroll;
+  gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scroll), tab->output_view);
+  tab->output_scroll = scroll;
   gtk_box_append(GTK_BOX(box), scroll);
 
   return box;
 }
 
-static GtkWidget *create_marked_row(AppWindow *win) {
+static GtkWidget *create_marked_row(Tab *tab, AppWindow *win) {
   GtkWidget *row;
+
+  (void)win;
 
   row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
   gtk_widget_set_margin_top(row, 4);
 
-  win->marked_label = gtk_label_new("Marked lines: none");
-  gtk_widget_set_margin_start(win->marked_label, 48);
-  gtk_label_set_xalign(GTK_LABEL(win->marked_label), 0.0f);
-  gtk_widget_set_margin_top(win->marked_label, 4);
-  gtk_widget_set_margin_bottom(win->marked_label, 4);
-  gtk_box_append(GTK_BOX(row), win->marked_label);
+  tab->marked_label = gtk_label_new("Marked lines: none");
+  gtk_widget_set_margin_start(tab->marked_label, 48);
+  gtk_label_set_xalign(GTK_LABEL(tab->marked_label), 0.0f);
+  gtk_widget_set_margin_top(tab->marked_label, 4);
+  gtk_widget_set_margin_bottom(tab->marked_label, 4);
+  gtk_box_append(GTK_BOX(row), tab->marked_label);
 
   return row;
 }
 
-static GtkWidget *create_action_row(AppWindow *win) {
+static GtkWidget *create_action_row(Tab *tab, AppWindow *win) {
   GtkWidget *row;
 
   row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
   gtk_widget_set_margin_top(row, 4);
   gtk_widget_set_margin_bottom(row, 4);
 
-  win->copy_btn = gtk_button_new_with_label("Copy Marked Lines");
-  g_object_ref_sink(win->copy_btn);
-  gtk_widget_set_sensitive(win->copy_btn, FALSE);
-  g_signal_connect_swapped(win->copy_btn, "clicked", G_CALLBACK(on_copy), win);
-  gtk_box_append(GTK_BOX(row), win->copy_btn);
+  tab->copy_btn = gtk_button_new_with_label("Copy Marked Lines");
+  g_object_ref_sink(tab->copy_btn);
+  gtk_widget_set_sensitive(tab->copy_btn, FALSE);
+  g_signal_connect_swapped(tab->copy_btn, "clicked", G_CALLBACK(on_copy), win);
+  gtk_box_append(GTK_BOX(row), tab->copy_btn);
 
-  win->close_btn = gtk_button_new_with_label("Close");
-  gtk_widget_set_margin_start(win->close_btn, 12);
-  g_signal_connect_swapped(win->close_btn, "clicked", G_CALLBACK(on_close),
+  tab->close_btn = gtk_button_new_with_label("Close");
+  gtk_widget_set_margin_start(tab->close_btn, 12);
+  g_signal_connect_swapped(tab->close_btn, "clicked", G_CALLBACK(on_close),
                            win);
-  gtk_box_append(GTK_BOX(row), win->close_btn);
+  gtk_box_append(GTK_BOX(row), tab->close_btn);
 
-  win->quit_btn = gtk_button_new_with_label("Close & Quit");
-  gtk_widget_add_css_class(win->quit_btn, "destructive-action");
-  g_signal_connect_swapped(win->quit_btn, "clicked", G_CALLBACK(on_quit), win);
-  gtk_box_append(GTK_BOX(row), win->quit_btn);
+  tab->quit_btn = gtk_button_new_with_label("Close & Quit");
+  gtk_widget_add_css_class(tab->quit_btn, "destructive-action");
+  g_signal_connect_swapped(tab->quit_btn, "clicked", G_CALLBACK(on_quit), win);
+  gtk_box_append(GTK_BOX(row), tab->quit_btn);
 
   return row;
 }
@@ -502,7 +503,7 @@ static GtkWidget *create_status_bar(AppWindow *win) {
   return outer;
 }
 
-static void setup_tooltips(AppWindow *win) {
+static void setup_tooltips(Tab *tab, AppWindow *win) {
   g_autofree char *t_copy = accel_to_human(
       runtime_config_get_string(win->config, "kb_copy_marked", KB_COPY_MARKED));
   g_autofree char *t_close = accel_to_human(
@@ -520,83 +521,83 @@ static void setup_tooltips(AppWindow *win) {
   char *tip;
 
   tip = g_strdup_printf("Copy Marked Lines: %s", t_copy);
-  gtk_widget_set_tooltip_text(win->copy_btn, tip);
+  gtk_widget_set_tooltip_text(tab->copy_btn, tip);
   g_free(tip);
   tip = g_strdup_printf("Close: %s", t_close);
-  gtk_widget_set_tooltip_text(win->close_btn, tip);
+  gtk_widget_set_tooltip_text(tab->close_btn, tip);
   g_free(tip);
   tip = g_strdup_printf("Close & Quit: %s", t_quit);
-  gtk_widget_set_tooltip_text(win->quit_btn, tip);
+  gtk_widget_set_tooltip_text(tab->quit_btn, tip);
   g_free(tip);
   tip = g_strdup_printf("Log: %s", t_log);
-  gtk_widget_set_tooltip_text(win->log_btn, tip);
+  gtk_widget_set_tooltip_text(tab->log_btn, tip);
   g_free(tip);
   tip = g_strdup_printf("Shortcuts: %s", t_shortcuts);
-  gtk_widget_set_tooltip_text(win->shortcuts_btn, tip);
+  gtk_widget_set_tooltip_text(tab->shortcuts_btn, tip);
   g_free(tip);
 
   tip = g_strdup_printf("Log: %s", t_log);
-  gtk_widget_set_tooltip_text(win->log_btn_top, tip);
+  gtk_widget_set_tooltip_text(tab->log_btn_top, tip);
   g_free(tip);
   tip = g_strdup_printf("Shortcuts: %s", t_shortcuts);
-  gtk_widget_set_tooltip_text(win->shortcuts_btn_top, tip);
+  gtk_widget_set_tooltip_text(tab->shortcuts_btn_top, tip);
   g_free(tip);
 
   tip = g_strdup_printf("Submit: %s", t_submit);
-  gtk_widget_set_tooltip_text(win->submit_btn, tip);
+  gtk_widget_set_tooltip_text(tab->submit_btn, tip);
   g_free(tip);
   if (strlen(t_cancel) > 0) {
     tip = g_strdup_printf("Cancel: ESC, ESC / %s", t_cancel);
   } else {
     tip = g_strdup("Cancel: ESC, ESC");
   }
-  gtk_widget_set_tooltip_text(win->cancel_btn, tip);
+  gtk_widget_set_tooltip_text(tab->cancel_btn, tip);
   g_free(tip);
 
-  gtk_widget_set_tooltip_text(win->follow_up_check,
+  gtk_widget_set_tooltip_text(tab->follow_up_check,
                               "Continue last session instead of starting new");
 
   tip = g_strdup_printf("Copy marked lines: %s", t_copy);
-  status_bar_on_hover(win->copy_btn, win, tip);
+  status_bar_on_hover(tab->copy_btn, win, tip);
   g_free(tip);
   tip = g_strdup_printf("Close window: %s", t_close);
-  status_bar_on_hover(win->close_btn, win, tip);
+  status_bar_on_hover(tab->close_btn, win, tip);
   g_free(tip);
   tip = g_strdup_printf("Close & quit: %s", t_quit);
-  status_bar_on_hover(win->quit_btn, win, tip);
+  status_bar_on_hover(tab->quit_btn, win, tip);
   g_free(tip);
   tip = g_strdup_printf("Open session log: %s", t_log);
-  status_bar_on_hover(win->log_btn, win, tip);
+  status_bar_on_hover(tab->log_btn, win, tip);
   g_free(tip);
   tip = g_strdup_printf("Open shortcuts: %s", t_shortcuts);
-  status_bar_on_hover(win->shortcuts_btn, win, tip);
+  status_bar_on_hover(tab->shortcuts_btn, win, tip);
   g_free(tip);
 
   tip = g_strdup_printf("Open session log: %s", t_log);
-  status_bar_on_hover(win->log_btn_top, win, tip);
+  status_bar_on_hover(tab->log_btn_top, win, tip);
   g_free(tip);
   tip = g_strdup_printf("Open shortcuts: %s", t_shortcuts);
-  status_bar_on_hover(win->shortcuts_btn_top, win, tip);
+  status_bar_on_hover(tab->shortcuts_btn_top, win, tip);
   g_free(tip);
 
   tip = g_strdup_printf("Submit prompt: %s", t_submit);
-  status_bar_on_hover(win->submit_btn, win, tip);
+  status_bar_on_hover(tab->submit_btn, win, tip);
   g_free(tip);
   if (strlen(t_cancel) > 0) {
     tip = g_strdup_printf("Interrupt running query: ESC, ESC / %s", t_cancel);
   } else {
     tip = g_strdup("Interrupt running query: ESC, ESC");
   }
-  status_bar_on_hover(win->cancel_btn, win, tip);
+  status_bar_on_hover(tab->cancel_btn, win, tip);
   g_free(tip);
 
-  status_bar_on_hover(win->follow_up_check, win,
+  status_bar_on_hover(tab->follow_up_check, win,
                       "Submit to continue the previous session");
   status_bar_on_hover(
-      win->prompt_view, win,
+      tab->prompt_view, win,
       "Type your prompt.  Ctrl+Enter to submit, Enter for newline.");
   status_bar_on_hover(
-      win->output_view, win,
+      tab->output_view, win,
       "Click gutter to mark lines.  Ctrl+Shift+C to copy marked lines.");
 }
 
@@ -607,83 +608,85 @@ static void _box_remove_all(GtkBox *box) {
     gtk_box_remove(box, child);
 }
 
-static void apply_layout(AppWindow *win) {
-  _box_remove_all(GTK_BOX(win->pane_left));
-  _box_remove_all(GTK_BOX(win->pane_right));
-  _box_remove_all(GTK_BOX(win->layout_popped));
+static void apply_layout(Tab *tab) {
+  _box_remove_all(GTK_BOX(tab->pane_left));
+  _box_remove_all(GTK_BOX(tab->pane_right));
+  _box_remove_all(GTK_BOX(tab->layout_popped));
 
-  gtk_widget_set_visible(win->popout_btn, !win->output_popped);
-  gtk_widget_set_visible(win->prompt_btns,
-                         !win->output_popped && win->layout_mode == 1);
-  gtk_widget_set_visible(win->agent_btns,
-                         !win->output_popped && win->layout_mode == 0);
+  gtk_widget_set_visible(tab->popout_btn, !tab->output_popped);
+  gtk_widget_set_visible(tab->prompt_btns,
+                         !tab->output_popped && tab->layout_mode == 1);
+  gtk_widget_set_visible(tab->agent_btns,
+                         !tab->output_popped && tab->layout_mode == 0);
 
-  if (win->output_popped) {
+  if (tab->output_popped) {
     GtkWidget *spacer;
 
-    gtk_box_append(GTK_BOX(win->layout_popped), win->prompt_section);
-    gtk_box_append(GTK_BOX(win->layout_popped), win->fu_row);
-    gtk_box_append(GTK_BOX(win->layout_popped), win->agent_row);
+    gtk_box_append(GTK_BOX(tab->layout_popped), tab->prompt_section);
+    gtk_box_append(GTK_BOX(tab->layout_popped), tab->fu_row);
+    gtk_box_append(GTK_BOX(tab->layout_popped), tab->agent_row);
 
     spacer = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
     gtk_widget_set_hexpand(spacer, TRUE);
-    gtk_box_append(GTK_BOX(win->layout_popped), spacer);
+    gtk_box_append(GTK_BOX(tab->layout_popped), spacer);
 
-    gtk_box_append(GTK_BOX(win->layout_popped), win->action_row);
+    gtk_box_append(GTK_BOX(tab->layout_popped), tab->action_row);
 
-    gtk_stack_set_visible_child_name(GTK_STACK(win->content_stack), "popped");
+    gtk_stack_set_visible_child_name(GTK_STACK(tab->content_stack), "popped");
   } else {
     GtkOrientation orientation;
 
-    orientation = win->layout_mode == 0 ? GTK_ORIENTATION_VERTICAL
+    orientation = tab->layout_mode == 0 ? GTK_ORIENTATION_VERTICAL
                                         : GTK_ORIENTATION_HORIZONTAL;
-    gtk_orientable_set_orientation(GTK_ORIENTABLE(win->layout_paned),
+    gtk_orientable_set_orientation(GTK_ORIENTABLE(tab->layout_paned),
                                    orientation);
 
-    gtk_paned_set_start_child(GTK_PANED(win->layout_paned), win->pane_left);
-    gtk_paned_set_end_child(GTK_PANED(win->layout_paned), win->pane_right);
+    gtk_paned_set_start_child(GTK_PANED(tab->layout_paned), tab->pane_left);
+    gtk_paned_set_end_child(GTK_PANED(tab->layout_paned), tab->pane_right);
 
-    gtk_widget_set_margin_start(win->pane_left, 12);
-    gtk_widget_set_margin_end(win->pane_left,
+    gtk_widget_set_margin_start(tab->pane_left, 12);
+    gtk_widget_set_margin_end(tab->pane_left,
                               orientation == GTK_ORIENTATION_VERTICAL ? 12 : 4);
-    gtk_widget_set_margin_top(win->pane_left, 12);
+    gtk_widget_set_margin_top(tab->pane_left, 12);
 
-    gtk_widget_set_margin_start(win->pane_right, 12);
-    gtk_widget_set_margin_end(win->pane_right, 12);
-    gtk_widget_set_margin_top(win->pane_right, 12);
+    gtk_widget_set_margin_start(tab->pane_right, 12);
+    gtk_widget_set_margin_end(tab->pane_right, 12);
+    gtk_widget_set_margin_top(tab->pane_right, 12);
 
-    gtk_widget_set_size_request(win->pane_left, 200, 160);
-    gtk_widget_set_size_request(win->pane_right, 200, 200);
+    gtk_widget_set_size_request(tab->pane_left, 200, 160);
+    gtk_widget_set_size_request(tab->pane_right, 200, 200);
 
-    gtk_box_append(GTK_BOX(win->pane_left), win->prompt_section);
-    gtk_box_append(GTK_BOX(win->pane_left), win->fu_row);
-    gtk_box_append(GTK_BOX(win->pane_left), win->agent_row);
+    gtk_box_append(GTK_BOX(tab->pane_left), tab->prompt_section);
+    gtk_box_append(GTK_BOX(tab->pane_left), tab->fu_row);
+    gtk_box_append(GTK_BOX(tab->pane_left), tab->agent_row);
 
-    gtk_box_append(GTK_BOX(win->pane_right), win->output_section);
-    gtk_box_append(GTK_BOX(win->pane_right), win->marked_row);
-    gtk_box_append(GTK_BOX(win->pane_right), win->action_row);
+    gtk_box_append(GTK_BOX(tab->pane_right), tab->output_section);
+    gtk_box_append(GTK_BOX(tab->pane_right), tab->marked_row);
+    gtk_box_append(GTK_BOX(tab->pane_right), tab->action_row);
 
-    gtk_paned_set_shrink_start_child(GTK_PANED(win->layout_paned), FALSE);
-    gtk_paned_set_shrink_end_child(GTK_PANED(win->layout_paned), FALSE);
+    gtk_paned_set_shrink_start_child(GTK_PANED(tab->layout_paned), FALSE);
+    gtk_paned_set_shrink_end_child(GTK_PANED(tab->layout_paned), FALSE);
 
-    gtk_paned_set_position(GTK_PANED(win->layout_paned),
+    gtk_paned_set_position(GTK_PANED(tab->layout_paned),
                            orientation == GTK_ORIENTATION_VERTICAL ? 350 : 450);
 
-    gtk_stack_set_visible_child_name(GTK_STACK(win->content_stack), "paned");
-    gtk_widget_grab_focus(win->prompt_view);
+    gtk_stack_set_visible_child_name(GTK_STACK(tab->content_stack), "paned");
+    gtk_widget_grab_focus(tab->prompt_view);
   }
 }
 
-static void toggle_popout(AppWindow *win) {
-  if (!win->output_popped) {
+static void toggle_popout(Tab *tab) {
+  AppWindow *win = tab->win;
+
+  if (!tab->output_popped) {
     GtkWidget *popup, *popup_box, *btn, *crow;
     struct PopupEscCtx *ctx;
     GtkEventController *pctrl;
 
-    win->output_popped = TRUE;
-    apply_layout(win);
+    tab->output_popped = TRUE;
+    apply_layout(tab);
 
-    gtk_box_remove(GTK_BOX(win->action_row), win->copy_btn);
+    gtk_box_remove(GTK_BOX(tab->action_row), tab->copy_btn);
 
     popup = gtk_window_new();
     gtk_window_set_title(GTK_WINDOW(popup), "Promptr — Output");
@@ -692,8 +695,8 @@ static void toggle_popout(AppWindow *win) {
     gtk_window_set_default_size(GTK_WINDOW(popup), 700, 400);
 
     ctx = g_new(struct PopupEscCtx, 1);
-    ctx->win = win;
-    ctx->close_fn = toggle_popout;
+    ctx->data = tab;
+    ctx->close_fn = (void (*)(gpointer))toggle_popout;
     pctrl = gtk_event_controller_key_new();
     gtk_widget_add_controller(popup, pctrl);
     g_signal_connect_data(pctrl, "key-pressed", G_CALLBACK(on_popup_esc), ctx,
@@ -706,39 +709,39 @@ static void toggle_popout(AppWindow *win) {
     gtk_widget_set_margin_bottom(popup_box, 8);
     gtk_window_set_child(GTK_WINDOW(popup), popup_box);
 
-    gtk_box_append(GTK_BOX(popup_box), win->output_section);
-    gtk_box_append(GTK_BOX(popup_box), win->marked_row);
+    gtk_box_append(GTK_BOX(popup_box), tab->output_section);
+    gtk_box_append(GTK_BOX(popup_box), tab->marked_row);
 
     crow = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
-    gtk_box_append(GTK_BOX(crow), win->copy_btn);
+    gtk_box_append(GTK_BOX(crow), tab->copy_btn);
     btn = gtk_button_new_with_label("Dock");
-    g_signal_connect_swapped(btn, "clicked", G_CALLBACK(toggle_popout), win);
+    g_signal_connect_swapped(btn, "clicked", G_CALLBACK(toggle_popout), tab);
     gtk_box_append(GTK_BOX(crow), btn);
     gtk_box_append(GTK_BOX(popup_box), crow);
 
-    win->popout_window = popup;
+    tab->popout_window = popup;
     gtk_window_present(GTK_WINDOW(popup));
   } else {
     GtkWidget *popup, *popup_box, *crow;
 
-    popup = win->popout_window;
+    popup = tab->popout_window;
     if (popup != NULL && GTK_IS_WINDOW(popup)) {
       popup_box = gtk_window_get_child(GTK_WINDOW(popup));
       if (popup_box != NULL && GTK_IS_BOX(popup_box)) {
-        gtk_box_remove(GTK_BOX(popup_box), win->output_section);
-        gtk_box_remove(GTK_BOX(popup_box), win->marked_row);
+        gtk_box_remove(GTK_BOX(popup_box), tab->output_section);
+        gtk_box_remove(GTK_BOX(popup_box), tab->marked_row);
 
-        crow = gtk_widget_get_parent(win->copy_btn);
+        crow = gtk_widget_get_parent(tab->copy_btn);
         if (crow != NULL && GTK_IS_BOX(crow))
-          gtk_box_remove(GTK_BOX(crow), win->copy_btn);
+          gtk_box_remove(GTK_BOX(crow), tab->copy_btn);
       }
       gtk_window_destroy(GTK_WINDOW(popup));
     }
-    win->popout_window = NULL;
-    win->output_popped = FALSE;
+    tab->popout_window = NULL;
+    tab->output_popped = FALSE;
 
-    gtk_box_prepend(GTK_BOX(win->action_row), win->copy_btn);
-    apply_layout(win);
+    gtk_box_prepend(GTK_BOX(tab->action_row), tab->copy_btn);
+    apply_layout(tab);
   }
 }
 
@@ -746,14 +749,13 @@ AppWindow *app_window_new(GtkApplication *app) {
   AppWindow *win;
   GtkWidget *main_box;
   GtkWidget *status_bar_widget;
+  Tab *tab;
   g_autofree char *kb;
 
   win = g_new0(AppWindow, 1);
 
   win->app = app;
   win->config = runtime_config_load();
-  win->marked_lines_str = runtime_config_get_string(win->config, "marked_lines",
-                                                    DEFAULT_MARKED_LINES_STR);
 
   {
     g_autofree char *raw;
@@ -774,7 +776,7 @@ AppWindow *app_window_new(GtkApplication *app) {
     struct tm *tm;
 
     data_dir = g_get_user_data_dir();
-    log_dir = g_build_filename(data_dir, "promptr", "logs", NULL);
+    log_dir = g_build_filename(data_dir, DATA_DIR_SUFFIX, "logs", NULL);
     g_mkdir_with_parents(log_dir, 0700);
 
     now = time(NULL);
@@ -852,12 +854,21 @@ AppWindow *app_window_new(GtkApplication *app) {
         }
   }
 
+  win->tabs = g_ptr_array_new_with_free_func((GDestroyNotify)tab_free);
+  tab = tab_new(win, 0, "main");
+  g_ptr_array_add(win->tabs, tab);
+  win->active_tab_idx = 0;
+  win->next_tab_id = 1;
+
+  tab->marked_lines_str = runtime_config_get_string(win->config, "marked_lines",
+                                                    DEFAULT_MARKED_LINES_STR);
+
   {
     g_autofree char *layout_mode;
 
     layout_mode =
         runtime_config_get_string(win->config, "layout", LAYOUT_DEFAULT);
-    win->layout_mode = (g_strcmp0(layout_mode, "vertical") == 0) ? 1 : 0;
+    tab->layout_mode = (g_strcmp0(layout_mode, "vertical") == 0) ? 1 : 0;
   }
 
   win->window = gtk_window_new();
@@ -880,7 +891,7 @@ AppWindow *app_window_new(GtkApplication *app) {
     gtk_window_set_decorated(GTK_WINDOW(win->window), FALSE);
     gtk_layer_init_for_window(GTK_WINDOW(win->window));
     gtk_layer_set_layer(GTK_WINDOW(win->window), GTK_LAYER_SHELL_LAYER_OVERLAY);
-    gtk_layer_set_namespace(GTK_WINDOW(win->window), "promptr");
+    gtk_layer_set_namespace(GTK_WINDOW(win->window), DATA_DIR_SUFFIX);
     gtk_layer_set_keyboard_mode(GTK_WINDOW(win->window),
                                 GTK_LAYER_SHELL_KEYBOARD_MODE_EXCLUSIVE);
   } else {
@@ -904,19 +915,19 @@ AppWindow *app_window_new(GtkApplication *app) {
   main_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
   gtk_window_set_child(GTK_WINDOW(win->window), main_box);
 
-  win->prompt_section = create_prompt_section(win);
-  win->fu_row = create_follow_up_row(win);
-  win->agent_row = create_agent_row(win);
-  win->output_section = create_output_section(win);
-  win->marked_row = create_marked_row(win);
-  win->action_row = create_action_row(win);
+  tab->prompt_section = create_prompt_section(tab, win);
+  tab->fu_row = create_follow_up_row(tab, win);
+  tab->agent_row = create_agent_row(tab, win);
+  tab->output_section = create_output_section(tab, win);
+  tab->marked_row = create_marked_row(tab, win);
+  tab->action_row = create_action_row(tab, win);
 
-  g_object_ref_sink(win->prompt_section);
-  g_object_ref_sink(win->fu_row);
-  g_object_ref_sink(win->agent_row);
-  g_object_ref_sink(win->output_section);
-  g_object_ref_sink(win->marked_row);
-  g_object_ref_sink(win->action_row);
+  g_object_ref_sink(tab->prompt_section);
+  g_object_ref_sink(tab->fu_row);
+  g_object_ref_sink(tab->agent_row);
+  g_object_ref_sink(tab->output_section);
+  g_object_ref_sink(tab->marked_row);
+  g_object_ref_sink(tab->action_row);
 
   win->cmd_label = gtk_text_view_new();
   gtk_text_view_set_editable(GTK_TEXT_VIEW(win->cmd_label), FALSE);
@@ -931,61 +942,120 @@ AppWindow *app_window_new(GtkApplication *app) {
   log_append(win, "session → started");
 
   status_bar_widget = create_status_bar(win);
-  gtk_box_append(GTK_BOX(main_box), status_bar_widget);
 
   {
-    win->content_stack = gtk_stack_new();
-    gtk_stack_set_vhomogeneous(GTK_STACK(win->content_stack), FALSE);
-    gtk_widget_set_vexpand(win->content_stack, TRUE);
-    gtk_box_prepend(GTK_BOX(main_box), win->content_stack);
+    GtkWidget *tab_bar_box;
 
-    win->layout_paned = gtk_paned_new(GTK_ORIENTATION_VERTICAL);
-    gtk_stack_add_named(GTK_STACK(win->content_stack), win->layout_paned,
+    win->tab_bar = gtk_scrolled_window_new();
+    gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(win->tab_bar),
+                                   GTK_POLICY_AUTOMATIC, GTK_POLICY_NEVER);
+    gtk_scrolled_window_set_propagate_natural_height(
+        GTK_SCROLLED_WINDOW(win->tab_bar), TRUE);
+
+    tab_bar_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
+    gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(win->tab_bar),
+                                  tab_bar_box);
+    {
+      GtkWidget *btn, *box, *label, *close_btn;
+
+      btn = gtk_toggle_button_new();
+      gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(btn), TRUE);
+      gtk_widget_add_css_class(btn, "tab-button");
+
+      box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4);
+      gtk_widget_set_margin_start(box, 4);
+      gtk_widget_set_margin_end(box, 4);
+      gtk_widget_set_margin_top(box, 4);
+      gtk_widget_set_margin_bottom(box, 4);
+
+      label = gtk_label_new("main");
+      gtk_label_set_xalign(GTK_LABEL(label), 0.0f);
+      gtk_box_append(GTK_BOX(box), label);
+
+      close_btn = gtk_button_new_with_label("×");
+      gtk_widget_add_css_class(close_btn, "tab-close-btn");
+      gtk_widget_set_margin_start(close_btn, 4);
+      gtk_box_append(GTK_BOX(box), close_btn);
+
+      gtk_box_append(GTK_BOX(box), btn);
+      gtk_box_append(GTK_BOX(tab_bar_box), btn);
+    }
+    {
+      GtkWidget *add_btn;
+
+      add_btn = gtk_button_new_with_label("+");
+      gtk_widget_add_css_class(add_btn, "tab-add-btn");
+      gtk_widget_set_margin_start(add_btn, 4);
+      gtk_widget_set_margin_end(add_btn, 8);
+      gtk_widget_set_margin_top(add_btn, 4);
+      gtk_widget_set_margin_bottom(add_btn, 4);
+      gtk_box_append(GTK_BOX(tab_bar_box), add_btn);
+    }
+  }
+
+  gtk_box_append(GTK_BOX(main_box), win->tab_bar);
+
+  {
+    tab->content_stack = gtk_stack_new();
+    gtk_stack_set_vhomogeneous(GTK_STACK(tab->content_stack), FALSE);
+    gtk_widget_set_vexpand(tab->content_stack, TRUE);
+    gtk_box_append(GTK_BOX(main_box), tab->content_stack);
+
+    tab->layout_paned = gtk_paned_new(GTK_ORIENTATION_VERTICAL);
+    gtk_stack_add_named(GTK_STACK(tab->content_stack), tab->layout_paned,
                         "paned");
 
-    win->pane_left = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4);
-    win->pane_right = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4);
-    g_object_ref_sink(win->pane_left);
-    g_object_ref_sink(win->pane_right);
+    tab->pane_left = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4);
+    tab->pane_right = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4);
+    g_object_ref_sink(tab->pane_left);
+    g_object_ref_sink(tab->pane_right);
 
-    win->layout_popped = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
-    gtk_widget_set_margin_start(win->layout_popped, 12);
-    gtk_widget_set_margin_end(win->layout_popped, 12);
-    gtk_widget_set_margin_top(win->layout_popped, 12);
-    gtk_widget_set_vexpand(win->layout_popped, TRUE);
-    gtk_stack_add_named(GTK_STACK(win->content_stack), win->layout_popped,
+    tab->layout_popped = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
+    gtk_widget_set_margin_start(tab->layout_popped, 12);
+    gtk_widget_set_margin_end(tab->layout_popped, 12);
+    gtk_widget_set_margin_top(tab->layout_popped, 12);
+    gtk_widget_set_vexpand(tab->layout_popped, TRUE);
+    gtk_stack_add_named(GTK_STACK(tab->content_stack), tab->layout_popped,
                         "popped");
   }
 
-  setup_tooltips(win);
-  apply_layout(win);
+  gtk_box_append(GTK_BOX(main_box), status_bar_widget);
+
+  setup_tooltips(tab, win);
+  apply_layout(tab);
 
   app_window_restore_state(win);
-  update_cmd_preview(win);
+  update_cmd_preview(tab);
 
   return win;
 }
 
 void app_window_show(AppWindow *win) {
+  Tab *tab = app_window_get_active_tab(win);
+
   gtk_window_present(GTK_WINDOW(win->window));
-  set_prompt_focused(win);
+  if (tab != NULL)
+    set_prompt_focused(tab);
 }
 
 void app_window_present(AppWindow *win) {
+  Tab *tab = app_window_get_active_tab(win);
+
   gtk_window_present(GTK_WINDOW(win->window));
-  set_prompt_focused(win);
+  if (tab != NULL)
+    set_prompt_focused(tab);
 }
 
-static void remove_temp_dirs(AppWindow *win) {
+static void remove_temp_dirs(Tab *tab) {
   GSList *l;
   GDir *dir;
   const char *name;
   g_autofree char *path = NULL;
 
-  if (win->temp_dirs == NULL)
+  if (tab->temp_dirs == NULL)
     return;
 
-  for (l = win->temp_dirs; l != NULL; l = l->next) {
+  for (l = tab->temp_dirs; l != NULL; l = l->next) {
     dir = g_dir_open((const char *)l->data, 0, NULL);
     if (dir != NULL) {
       while ((name = g_dir_read_name(dir)) != NULL) {
@@ -997,20 +1067,26 @@ static void remove_temp_dirs(AppWindow *win) {
     rmdir((const char *)l->data);
     g_free(l->data);
   }
-  g_slist_free(win->temp_dirs);
-  win->temp_dirs = NULL;
+  g_slist_free(tab->temp_dirs);
+  tab->temp_dirs = NULL;
 }
 
 void app_window_close_and_quit(AppWindow *win) {
+  guint i;
+
   if (win == NULL)
     return;
-  remove_temp_dirs(win);
-  if (win->subprocess != NULL) {
-    command_cancel(win);
+
+  for (i = 0; i < win->tabs->len; i++) {
+    Tab *tab = g_ptr_array_index(win->tabs, i);
+
+    remove_temp_dirs(tab);
+    if (tab->subprocess != NULL)
+      command_cancel(tab);
+    if (tab->cancellable != NULL)
+      g_cancellable_cancel(tab->cancellable);
   }
-  if (win->cancellable != NULL) {
-    g_cancellable_cancel(win->cancellable);
-  }
+
   if (win->log_popup != NULL)
     gtk_window_destroy(GTK_WINDOW(win->log_popup));
   if (win->log_file != NULL) {
@@ -1026,18 +1102,10 @@ void app_window_free(gpointer data) {
 
   if (win == NULL)
     return;
-  remove_temp_dirs(win);
-  if (win->subprocess != NULL) {
-    command_cancel(win);
-  }
-  g_clear_object(&win->cancellable);
-  g_free(win->cmd_string);
-  g_free(win->marked_lines_str);
+
+  g_ptr_array_free(win->tabs, TRUE);
+
   g_free(win->opencode_bin);
-  g_free(win->last_tmpdir);
-  g_list_free_full(win->qa_history, g_free);
-  g_free(win->last_query);
-  g_free(win->last_output);
   runtime_config_free(win->config);
   if (win->log_file != NULL)
     fclose(win->log_file);
@@ -1046,52 +1114,67 @@ void app_window_free(gpointer data) {
 
 /* ── state management ──────────────────────────────────────────── */
 
-static void set_load_state_common(AppWindow *win, gboolean loading) {
-  gtk_widget_set_sensitive(win->prompt_view, !loading);
-  gtk_widget_set_sensitive(win->agent_dropdown, !loading);
-  gtk_widget_set_sensitive(win->model_dropdown, !loading);
-  gtk_widget_set_sensitive(win->follow_up_check, !loading);
-  gtk_widget_set_sensitive(win->submit_btn, !loading);
-  gtk_widget_set_visible(win->cancel_btn, loading);
-  gtk_widget_set_sensitive(win->cancel_btn, loading);
-  gtk_spinner_set_spinning(GTK_SPINNER(win->spinner), loading);
-  gtk_widget_set_visible(win->spinner, loading);
+static void set_load_state_common(Tab *tab) {
+  gtk_widget_set_sensitive(tab->prompt_view, FALSE);
+  gtk_widget_set_sensitive(tab->agent_dropdown, FALSE);
+  gtk_widget_set_sensitive(tab->model_dropdown, FALSE);
+  gtk_widget_set_sensitive(tab->follow_up_check, FALSE);
+  gtk_widget_set_sensitive(tab->submit_btn, FALSE);
+  gtk_widget_set_visible(tab->cancel_btn, TRUE);
+  gtk_widget_set_sensitive(tab->cancel_btn, TRUE);
+  gtk_spinner_set_spinning(GTK_SPINNER(tab->spinner), TRUE);
+  gtk_widget_set_visible(tab->spinner, TRUE);
 }
 
-static void set_loading_state(AppWindow *win, const char *cmd) {
-  win->state = STATE_LOADING;
-  set_load_state_common(win, TRUE);
+static void set_load_state_uncommon(Tab *tab) {
+  gtk_widget_set_sensitive(tab->prompt_view, TRUE);
+  gtk_widget_set_sensitive(tab->agent_dropdown, TRUE);
+  gtk_widget_set_sensitive(tab->model_dropdown, TRUE);
+  gtk_widget_set_sensitive(tab->follow_up_check, TRUE);
+  gtk_widget_set_sensitive(tab->submit_btn, TRUE);
+  gtk_widget_set_visible(tab->cancel_btn, FALSE);
+  gtk_widget_set_sensitive(tab->cancel_btn, FALSE);
+  gtk_spinner_set_spinning(GTK_SPINNER(tab->spinner), FALSE);
+  gtk_widget_set_visible(tab->spinner, FALSE);
+}
 
-  log_append(win, "submit → %s%s", win->follow_up_active ? "[follow-up] " : "",
+static void set_loading_state(Tab *tab, const char *cmd) {
+  AppWindow *win = tab->win;
+
+  tab->state = STATE_LOADING;
+  set_load_state_common(tab);
+
+  log_append(win, "submit → %s%s", tab->follow_up_active ? "[follow-up] " : "",
              cmd);
 
-  gtk_button_set_label(GTK_BUTTON(win->submit_btn), "Running...");
+  gtk_button_set_label(GTK_BUTTON(tab->submit_btn), "Running...");
 
   set_status_text(win, "Running Query: ESC to interrupt");
 
-  update_submit_sensitivity(win);
+  update_submit_sensitivity(tab);
 }
 
-static void set_finished_state(AppWindow *win, char *cmd, gint64 elapsed,
+static void set_finished_state(Tab *tab, char *cmd, gint64 elapsed,
                                const char *output) {
+  AppWindow *win = tab->win;
   gint64 ms;
   int lines;
 
   disarm_escape(win);
-  set_load_state_common(win, FALSE);
-  win->state = STATE_FINISHED;
+  set_load_state_uncommon(tab);
+  tab->state = STATE_FINISHED;
 
   set_status_text(win, "Ready");
 
   ms = elapsed / 1000;
   if (output != NULL && output[0] != '\0') {
     GtkTextBuffer *buf;
-    buf = gtk_text_view_get_buffer(GTK_TEXT_VIEW(win->output_view));
-    if (win->follow_up_active) {
+    buf = gtk_text_view_get_buffer(GTK_TEXT_VIEW(tab->output_view));
+    if (tab->follow_up_active) {
       GString *display = g_string_new(output);
       GList *l;
 
-      for (l = win->qa_history; l != NULL; l = l->next)
+      for (l = tab->qa_history; l != NULL; l = l->next)
         g_string_append_printf(display, "\n---\n%s", (char *)l->data);
       {
         g_autofree char *combined = g_string_free(display, FALSE);
@@ -1101,37 +1184,39 @@ static void set_finished_state(AppWindow *win, char *cmd, gint64 elapsed,
     } else {
       gtk_text_buffer_set_text(buf, output, -1);
       lines = gtk_text_buffer_get_line_count(buf);
-      if (!win->defaults_applied) {
-        apply_default_marks(win, buf);
-        win->defaults_applied = TRUE;
+      if (!tab->defaults_applied) {
+        apply_default_marks(tab, buf);
+        tab->defaults_applied = TRUE;
       }
     }
-    g_free(win->last_output);
-    win->last_output = g_strdup(output);
-    update_marked_label(win);
-    gtk_widget_set_sensitive(win->copy_btn, TRUE);
+    g_free(tab->last_output);
+    tab->last_output = g_strdup(output);
+    update_marked_label(tab);
+    gtk_widget_set_sensitive(tab->copy_btn, TRUE);
   } else {
     GtkTextBuffer *buf;
-    buf = gtk_text_view_get_buffer(GTK_TEXT_VIEW(win->output_view));
-    if (!win->follow_up_active)
+    buf = gtk_text_view_get_buffer(GTK_TEXT_VIEW(tab->output_view));
+    if (!tab->follow_up_active)
       gtk_text_buffer_set_text(buf, "", -1);
     lines = gtk_text_buffer_get_line_count(buf);
-    gtk_widget_set_sensitive(win->copy_btn, lines > 0);
+    gtk_widget_set_sensitive(tab->copy_btn, lines > 0);
   }
 
   log_append(win, "finished → Took %" G_GINT64_FORMAT "ms. %d lines.", ms,
              lines);
   g_free(cmd);
 
-  gtk_button_set_label(GTK_BUTTON(win->submit_btn), "Submit");
-  update_submit_sensitivity(win);
-  set_prompt_focused(win);
+  gtk_button_set_label(GTK_BUTTON(tab->submit_btn), "Submit");
+  update_submit_sensitivity(tab);
+  set_prompt_focused(tab);
 }
 
-static void set_canceled_state(AppWindow *win, char *cmd) {
+static void set_canceled_state(Tab *tab, char *cmd) {
+  AppWindow *win = tab->win;
+
   disarm_escape(win);
-  set_load_state_common(win, FALSE);
-  win->state = STATE_CANCELED;
+  set_load_state_uncommon(tab);
+  tab->state = STATE_CANCELED;
 
   set_status_text(win, "Interrupted");
   g_timeout_add(2000, (GSourceFunc)status_pop_cb, win->status_bar);
@@ -1139,19 +1224,19 @@ static void set_canceled_state(AppWindow *win, char *cmd) {
   log_append(win, "cancel → Cancelled.");
   g_free(cmd);
 
-  gtk_button_set_label(GTK_BUTTON(win->submit_btn), "Submit");
-  update_submit_sensitivity(win);
-  set_prompt_focused(win);
+  gtk_button_set_label(GTK_BUTTON(tab->submit_btn), "Submit");
+  update_submit_sensitivity(tab);
+  set_prompt_focused(tab);
 }
 
-static void set_errored_state(AppWindow *win, char *cmd,
-                              const char *stderr_output) {
+static void set_errored_state(Tab *tab, char *cmd, const char *stderr_output) {
+  AppWindow *win = tab->win;
   GtkTextBuffer *buf;
   g_autofree char *err_summary = NULL;
 
   disarm_escape(win);
-  set_load_state_common(win, FALSE);
-  win->state = STATE_FINISHED;
+  set_load_state_uncommon(tab);
+  tab->state = STATE_FINISHED;
 
   set_status_text(win, "Ready");
 
@@ -1167,23 +1252,24 @@ static void set_errored_state(AppWindow *win, char *cmd,
              err_summary != NULL ? err_summary : "unknown error");
   g_free(cmd);
 
-  buf = gtk_text_view_get_buffer(GTK_TEXT_VIEW(win->output_view));
+  buf = gtk_text_view_get_buffer(GTK_TEXT_VIEW(tab->output_view));
   if (stderr_output != NULL)
     gtk_text_buffer_set_text(buf, stderr_output, -1);
   else
     gtk_text_buffer_set_text(buf, "", -1);
-  gtk_widget_set_sensitive(win->copy_btn,
+  gtk_widget_set_sensitive(tab->copy_btn,
                            stderr_output != NULL && stderr_output[0] != '\0');
-  update_marked_label(win);
+  update_marked_label(tab);
 
-  gtk_button_set_label(GTK_BUTTON(win->submit_btn), "Submit");
-  update_submit_sensitivity(win);
-  set_prompt_focused(win);
+  gtk_button_set_label(GTK_BUTTON(tab->submit_btn), "Submit");
+  update_submit_sensitivity(tab);
+  set_prompt_focused(tab);
 }
 
 /* ── submit ────────────────────────────────────────────────────── */
 
 static void on_submit(AppWindow *win) {
+  Tab *tab;
   char *query, *agent, *model;
   GString *display;
   char *cmd_display;
@@ -1192,56 +1278,59 @@ static void on_submit(AppWindow *win) {
   gboolean is_follow_up;
   GError *err = NULL;
 
-  if (win->subprocess != NULL)
+  tab = app_window_get_active_tab(win);
+  if (tab == NULL)
+    return;
+  if (tab->subprocess != NULL)
     return;
 
-  query = get_trimmed_text(win->prompt_view);
+  query = get_trimmed_text(tab->prompt_view);
   if (query == NULL || query[0] == '\0') {
     g_free(query);
     return;
   }
 
-  agent = get_selected_text(win->agent_dropdown);
-  model = get_selected_text(win->model_dropdown);
+  agent = get_selected_text(tab->agent_dropdown);
+  model = get_selected_text(tab->model_dropdown);
 
-  win->follow_up_active = win->follow_up;
+  tab->follow_up_active = tab->follow_up;
 
-  if (win->follow_up_active && win->last_tmpdir != NULL) {
+  if (tab->follow_up_active && tab->tmpdir_path != NULL) {
     is_follow_up = TRUE;
   } else {
     is_follow_up = FALSE;
-    win->follow_up_active = FALSE;
+    tab->follow_up_active = FALSE;
 
-    tmpdir = g_dir_make_tmp("promptr-XXXXXX", &err);
+    tmpdir = g_dir_make_tmp(DATA_DIR_SUFFIX "-XXXXXX", &err);
     if (tmpdir == NULL) {
       g_warning("Failed to create temp dir: %s", err->message);
       g_clear_error(&err);
     } else {
-      g_free(win->last_tmpdir);
-      win->last_tmpdir = g_strdup(tmpdir);
-      gtk_widget_set_sensitive(win->follow_up_check, TRUE);
+      g_free(tab->tmpdir_path);
+      tab->tmpdir_path = g_strdup(tmpdir);
+      gtk_widget_set_sensitive(tab->follow_up_check, TRUE);
     }
   }
 
   if (is_follow_up) {
-    if (win->last_output != NULL) {
-      win->follow_up_turn++;
-      char *block = g_strdup_printf("Q.%d: %s\nA: %s", win->follow_up_turn,
-                                    win->last_query, win->last_output);
-      win->qa_history = g_list_prepend(win->qa_history, block);
+    if (tab->last_output != NULL) {
+      tab->follow_up_turn++;
+      char *block = g_strdup_printf("Q.%d: %s\nA: %s", tab->follow_up_turn,
+                                    tab->last_query, tab->last_output);
+      tab->qa_history = g_list_prepend(tab->qa_history, block);
     }
   } else {
-    g_list_free_full(win->qa_history, g_free);
-    win->qa_history = NULL;
-    win->follow_up_turn = 0;
-    g_free(win->last_output);
-    win->last_output = NULL;
+    g_list_free_full(tab->qa_history, g_free);
+    tab->qa_history = NULL;
+    tab->follow_up_turn = 0;
+    g_free(tab->last_output);
+    tab->last_output = NULL;
   }
-  g_free(win->last_query);
-  win->last_query = g_strdup(query);
+  g_free(tab->last_query);
+  tab->last_query = g_strdup(query);
 
   if (is_follow_up)
-    tmpdir = g_strdup(win->last_tmpdir);
+    tmpdir = g_strdup(tab->tmpdir_path);
 
   display = g_string_new(win->opencode_bin);
   g_string_append(display, " run");
@@ -1256,35 +1345,36 @@ static void on_submit(AppWindow *win) {
   g_string_append_printf(display, " %s", query);
   cmd_display = g_string_free(display, FALSE);
 
-  g_free(win->cmd_string);
-  win->cmd_string = cmd_display;
+  g_free(tab->cmd_string);
+  tab->cmd_string = cmd_display;
 
-  outbuf = gtk_text_view_get_buffer(GTK_TEXT_VIEW(win->output_view));
+  outbuf = gtk_text_view_get_buffer(GTK_TEXT_VIEW(tab->output_view));
   if (!is_follow_up)
     gtk_text_buffer_set_text(outbuf, "", -1);
-  gtk_widget_set_sensitive(win->copy_btn, FALSE);
+  gtk_widget_set_sensitive(tab->copy_btn, FALSE);
 
-  command_execute(win, model, agent, query, tmpdir, win->opencode_bin,
+  command_execute(tab, model, agent, query, tmpdir, win->opencode_bin,
                   is_follow_up, command_finished_cb);
 
-  if (win->subprocess != NULL && tmpdir != NULL && !is_follow_up)
-    win->temp_dirs = g_slist_prepend(win->temp_dirs, g_strdup(tmpdir));
+  if (tab->subprocess != NULL && tmpdir != NULL && !is_follow_up)
+    tab->temp_dirs = g_slist_prepend(tab->temp_dirs, g_strdup(tmpdir));
 
-  if (win->subprocess != NULL)
-    set_loading_state(win, cmd_display);
+  if (tab->subprocess != NULL)
+    set_loading_state(tab, cmd_display);
 
   g_free(query);
   g_free(agent);
   g_free(model);
 }
 
-static void command_finished_cb(AppWindow *win, const char *output,
+static void command_finished_cb(Tab *tab, const char *output,
                                 const char *stderr_output, gint64 elapsed,
                                 int exit_code, gboolean exited_cleanly) {
+  AppWindow *win = tab->win;
   char *cmd;
 
-  cmd = win->cmd_string;
-  win->cmd_string = NULL;
+  cmd = tab->cmd_string;
+  tab->cmd_string = NULL;
 
   if (win->destroyed) {
     g_free(cmd);
@@ -1292,39 +1382,48 @@ static void command_finished_cb(AppWindow *win, const char *output,
   }
 
   if (!exited_cleanly) {
-    set_canceled_state(win, cmd);
+    set_canceled_state(tab, cmd);
     return;
   }
 
   if (exit_code != 0) {
-    set_errored_state(win, cmd, stderr_output);
+    set_errored_state(tab, cmd, stderr_output);
     return;
   }
 
-  set_finished_state(win, cmd, elapsed, output);
+  set_finished_state(tab, cmd, elapsed, output);
 }
 
 /* ── cancel ────────────────────────────────────────────────────── */
 
 static void on_cancel(AppWindow *win) {
-  if (win->subprocess == NULL)
+  Tab *tab = app_window_get_active_tab(win);
+
+  if (tab == NULL || tab->subprocess == NULL)
     return;
   log_append(win, "cancel → user requested");
-  command_cancel(win);
+  command_cancel(tab);
 }
 
 static void on_follow_up_toggled(AppWindow *win) {
-  win->follow_up =
-      gtk_check_button_get_active(GTK_CHECK_BUTTON(win->follow_up_check));
-  update_cmd_preview(win);
+  Tab *tab = app_window_get_active_tab(win);
+
+  if (tab == NULL)
+    return;
+  tab->follow_up =
+      gtk_check_button_get_active(GTK_CHECK_BUTTON(tab->follow_up_check));
+  update_cmd_preview(tab);
 }
 
 static gboolean esc_arm_timeout_cb(gpointer data) {
   AppWindow *win = data;
+  Tab *tab;
 
   win->esc_armed = FALSE;
   win->esc_reset_timeout = 0;
-  if (win->subprocess != NULL)
+
+  tab = app_window_get_active_tab(win);
+  if (tab != NULL && tab->subprocess != NULL)
     set_status_text(win, "Running Query: ESC to interrupt");
   else
     set_status_text(win, "Ready");
@@ -1353,12 +1452,17 @@ static void set_status_text(AppWindow *win, const char *text) {
 }
 
 static void on_copy(AppWindow *win) {
+  Tab *tab;
   char *text;
   GdkClipboard *clipboard;
   size_t nlines;
   g_autofree char *msg = NULL;
 
-  text = get_marked_text(win);
+  tab = app_window_get_active_tab(win);
+  if (tab == NULL)
+    return;
+
+  text = get_marked_text(tab);
   clipboard = gdk_display_get_clipboard(gtk_widget_get_display(win->window));
   gdk_clipboard_set_text(clipboard, text);
 
@@ -1400,8 +1504,10 @@ static void on_copy(AppWindow *win) {
 /* ── close / quit ──────────────────────────────────────────────── */
 
 static void on_close(AppWindow *win) {
-  if (win->subprocess != NULL)
-    command_cancel(win);
+  Tab *tab = app_window_get_active_tab(win);
+
+  if (tab != NULL && tab->subprocess != NULL)
+    command_cancel(tab);
   gtk_widget_set_visible(win->window, FALSE);
 }
 
@@ -1411,10 +1517,13 @@ static void on_quit(AppWindow *win) {
 
 static gboolean on_close_request(GtkWindow *window, gpointer user_data) {
   AppWindow *win = user_data;
+  Tab *tab;
 
   (void)window;
-  if (win->subprocess != NULL)
-    command_cancel(win);
+
+  tab = app_window_get_active_tab(win);
+  if (tab != NULL && tab->subprocess != NULL)
+    command_cancel(tab);
   gtk_widget_set_visible(win->window, FALSE);
   return TRUE;
 }
@@ -1482,8 +1591,8 @@ static void on_log(AppWindow *win) {
       struct PopupEscCtx *ctx;
 
       ctx = g_new(struct PopupEscCtx, 1);
-      ctx->win = win;
-      ctx->close_fn = on_log_close;
+      ctx->data = win;
+      ctx->close_fn = (void (*)(gpointer))on_log_close;
 
       GtkEventController *k = gtk_event_controller_key_new();
       g_signal_connect_data(k, "key-pressed", G_CALLBACK(on_popup_esc), ctx,
@@ -1642,8 +1751,8 @@ static void on_shortcuts(AppWindow *win) {
       struct PopupEscCtx *ctx;
 
       ctx = g_new(struct PopupEscCtx, 1);
-      ctx->win = win;
-      ctx->close_fn = on_shortcuts_close;
+      ctx->data = win;
+      ctx->close_fn = (void (*)(gpointer))on_shortcuts_close;
 
       GtkEventController *k = gtk_event_controller_key_new();
       g_signal_connect_data(k, "key-pressed", G_CALLBACK(on_popup_esc), ctx,
@@ -1669,15 +1778,18 @@ static gboolean on_prompt_key_pressed(GtkEventControllerKey *controller,
                                       guint keyval, guint keycode,
                                       GdkModifierType state, AppWindow *win) {
   GdkModifierType mods;
+  Tab *tab;
 
   (void)controller;
   (void)keycode;
+
+  tab = app_window_get_active_tab(win);
 
   mods = state &
          (GDK_SHIFT_MASK | GDK_CONTROL_MASK | GDK_ALT_MASK | GDK_SUPER_MASK);
 
   if (keyval == GDK_KEY_Escape) {
-    if (win->subprocess != NULL) {
+    if (tab != NULL && tab->subprocess != NULL) {
       if (win->esc_armed) {
         disarm_escape(win);
         on_cancel(win);
@@ -1694,7 +1806,7 @@ static gboolean on_prompt_key_pressed(GtkEventControllerKey *controller,
   if (win->kb_cancel_keyval != 0 &&
       gdk_keyval_to_lower(keyval) == win->kb_cancel_keyval &&
       mods == win->kb_cancel_mods) {
-    if (win->subprocess != NULL) {
+    if (tab != NULL && tab->subprocess != NULL) {
       disarm_escape(win);
       on_cancel(win);
       return GDK_EVENT_STOP;
@@ -1703,7 +1815,8 @@ static gboolean on_prompt_key_pressed(GtkEventControllerKey *controller,
 
   if (keyval == GDK_KEY_Return || keyval == GDK_KEY_KP_Enter) {
     if (win->kb_submit_mods != 0 && mods == win->kb_submit_mods) {
-      if (gtk_widget_is_sensitive(win->submit_btn) && win->subprocess == NULL)
+      if (tab != NULL && gtk_widget_is_sensitive(tab->submit_btn) &&
+          tab->subprocess == NULL)
         on_submit(win);
       return GDK_EVENT_STOP;
     }
@@ -1719,16 +1832,19 @@ static gboolean on_window_key_pressed(GtkEventControllerKey *controller,
   GtkTextBuffer *buf;
   GtkTextIter start, end;
   GdkModifierType mods;
+  Tab *tab;
 
   (void)controller;
   (void)keycode;
+
+  tab = app_window_get_active_tab(win);
 
   keyval = gdk_keyval_to_lower(keyval);
   mods = state &
          (GDK_SHIFT_MASK | GDK_CONTROL_MASK | GDK_ALT_MASK | GDK_SUPER_MASK);
 
   if (keyval == GDK_KEY_Escape) {
-    if (win->subprocess != NULL) {
+    if (tab != NULL && tab->subprocess != NULL) {
       if (win->esc_armed) {
         disarm_escape(win);
         on_cancel(win);
@@ -1744,7 +1860,7 @@ static gboolean on_window_key_pressed(GtkEventControllerKey *controller,
 
   if (win->kb_cancel_keyval != 0 && keyval == win->kb_cancel_keyval &&
       mods == win->kb_cancel_mods) {
-    if (win->subprocess != NULL) {
+    if (tab != NULL && tab->subprocess != NULL) {
       disarm_escape(win);
       on_cancel(win);
       return GDK_EVENT_STOP;
@@ -1772,29 +1888,32 @@ static gboolean on_window_key_pressed(GtkEventControllerKey *controller,
   }
 
   if (keyval == win->kb_copy_keyval && mods == win->kb_copy_mods) {
-    if (gtk_widget_is_sensitive(win->copy_btn))
+    if (tab != NULL && gtk_widget_is_sensitive(tab->copy_btn))
       on_copy(win);
     return GDK_EVENT_STOP;
   }
 
   if (keyval == win->kb_focus_keyval && mods == win->kb_focus_mods) {
-    gtk_widget_grab_focus(win->prompt_view);
-    buf = gtk_text_view_get_buffer(GTK_TEXT_VIEW(win->prompt_view));
-    gtk_text_buffer_get_bounds(buf, &start, &end);
-    gtk_text_buffer_select_range(buf, &start, &end);
+    if (tab != NULL) {
+      gtk_widget_grab_focus(tab->prompt_view);
+      buf = gtk_text_view_get_buffer(GTK_TEXT_VIEW(tab->prompt_view));
+      gtk_text_buffer_get_bounds(buf, &start, &end);
+      gtk_text_buffer_select_range(buf, &start, &end);
+    }
     return GDK_EVENT_STOP;
   }
 
   if (keyval == win->kb_layout_keyval && mods == win->kb_layout_mods) {
-    if (!win->output_popped) {
-      win->layout_mode = !win->layout_mode;
-      apply_layout(win);
+    if (tab != NULL && !tab->output_popped) {
+      tab->layout_mode = !tab->layout_mode;
+      apply_layout(tab);
     }
     return GDK_EVENT_STOP;
   }
 
   if (keyval == win->kb_popout_keyval && mods == win->kb_popout_mods) {
-    toggle_popout(win);
+    if (tab != NULL)
+      toggle_popout(tab);
     return GDK_EVENT_STOP;
   }
 
@@ -1804,25 +1923,31 @@ static gboolean on_window_key_pressed(GtkEventControllerKey *controller,
 /* ── prompt change ─────────────────────────────────────────────── */
 
 static void on_prompt_changed(GtkTextBuffer *buffer, AppWindow *win) {
+  Tab *tab = app_window_get_active_tab(win);
+
   (void)buffer;
-  gtk_widget_set_visible(win->placeholder_label,
+
+  if (tab == NULL)
+    return;
+
+  gtk_widget_set_visible(tab->placeholder_label,
                          gtk_text_buffer_get_char_count(buffer) == 0);
-  update_submit_sensitivity(win);
-  update_cmd_preview(win);
+  update_submit_sensitivity(tab);
+  update_cmd_preview(tab);
 }
 
-static void update_submit_sensitivity(AppWindow *win) {
+static void update_submit_sensitivity(Tab *tab) {
   gboolean enable;
   char *text;
 
-  if (win->subprocess != NULL) {
-    gtk_widget_set_sensitive(win->submit_btn, FALSE);
+  if (tab->subprocess != NULL) {
+    gtk_widget_set_sensitive(tab->submit_btn, FALSE);
     return;
   }
 
-  text = get_trimmed_text(win->prompt_view);
+  text = get_trimmed_text(tab->prompt_view);
   enable = (text != NULL && text[0] != '\0');
-  gtk_widget_set_sensitive(win->submit_btn, enable);
+  gtk_widget_set_sensitive(tab->submit_btn, enable);
   g_free(text);
 }
 
@@ -1964,8 +2089,8 @@ static void status_bar_on_hover(GtkWidget *widget, AppWindow *win,
   gtk_widget_add_controller(widget, motion);
 }
 
-static void set_prompt_focused(AppWindow *win) {
-  gtk_widget_grab_focus(win->prompt_view);
+static void set_prompt_focused(Tab *tab) {
+  gtk_widget_grab_focus(tab->prompt_view);
 }
 
 static GtkWidget *kbd_label(const char *text) {
@@ -2073,14 +2198,20 @@ static gboolean hex_to_rgba(const char *hex, GdkRGBA *out) {
 
 static void on_dropdown_changed(GObject *self, GParamSpec *pspec,
                                 AppWindow *win) {
+  Tab *tab;
   char *agent, *model;
 
   (void)self;
   (void)pspec;
-  update_cmd_preview(win);
 
-  agent = get_selected_text(win->agent_dropdown);
-  model = get_selected_text(win->model_dropdown);
+  tab = app_window_get_active_tab(win);
+  if (tab == NULL)
+    return;
+
+  update_cmd_preview(tab);
+
+  agent = get_selected_text(tab->agent_dropdown);
+  model = get_selected_text(tab->model_dropdown);
   state_save(model, agent);
   g_free(agent);
   g_free(model);
@@ -2088,23 +2219,24 @@ static void on_dropdown_changed(GObject *self, GParamSpec *pspec,
 
 /* ── cmd preview ──────────────────────────────────────────────── */
 
-static void update_cmd_preview(AppWindow *win) {
+static void update_cmd_preview(Tab *tab) {
+  AppWindow *win = tab->win;
   char *query, *agent, *model;
   GString *display;
 
-  if (win->state == STATE_LOADING)
+  if (tab->state == STATE_LOADING)
     return;
 
-  if (win->state == STATE_FINISHED || win->state == STATE_CANCELED)
-    win->state = STATE_IDLE;
+  if (tab->state == STATE_FINISHED || tab->state == STATE_CANCELED)
+    tab->state = STATE_IDLE;
 
-  query = get_trimmed_text(win->prompt_view);
-  agent = get_selected_text(win->agent_dropdown);
-  model = get_selected_text(win->model_dropdown);
+  query = get_trimmed_text(tab->prompt_view);
+  agent = get_selected_text(tab->agent_dropdown);
+  model = get_selected_text(tab->model_dropdown);
 
   display = g_string_new(win->opencode_bin);
   g_string_append(display, " run");
-  if (win->follow_up)
+  if (tab->follow_up)
     g_string_append(display, " --continue --dir <tmp>");
   else
     g_string_append(display, " --dir <tmp>");
@@ -2145,6 +2277,7 @@ static void toggle_mark_at_iter(GtkTextBuffer *buf, GtkTextIter *iter) {
 
 static void on_gutter_click(GtkGestureClick *gesture, int n_press, double x,
                             double y, AppWindow *win) {
+  Tab *tab;
   GtkTextBuffer *buf;
   GtkTextIter iter;
   int buf_x, buf_y;
@@ -2152,27 +2285,31 @@ static void on_gutter_click(GtkGestureClick *gesture, int n_press, double x,
   (void)gesture;
   (void)n_press;
 
-  gtk_text_view_window_to_buffer_coords(GTK_TEXT_VIEW(win->output_view),
+  tab = app_window_get_active_tab(win);
+  if (tab == NULL)
+    return;
+
+  gtk_text_view_window_to_buffer_coords(GTK_TEXT_VIEW(tab->output_view),
                                         GTK_TEXT_WINDOW_WIDGET, (int)x, (int)y,
                                         &buf_x, &buf_y);
 
   if (buf_x >= 0)
     return;
 
-  buf = gtk_text_view_get_buffer(GTK_TEXT_VIEW(win->output_view));
-  gtk_text_view_get_iter_at_location(GTK_TEXT_VIEW(win->output_view), &iter,
+  buf = gtk_text_view_get_buffer(GTK_TEXT_VIEW(tab->output_view));
+  gtk_text_view_get_iter_at_location(GTK_TEXT_VIEW(tab->output_view), &iter,
                                      buf_x, buf_y);
   toggle_mark_at_iter(buf, &iter);
-  update_marked_label(win);
+  update_marked_label(tab);
 }
 
-static void update_marked_label(AppWindow *win) {
+static void update_marked_label(Tab *tab) {
   GtkTextBuffer *buf;
   GtkTextIter iter;
   GString *label;
   int line, marked, total;
 
-  buf = gtk_text_view_get_buffer(GTK_TEXT_VIEW(win->output_view));
+  buf = gtk_text_view_get_buffer(GTK_TEXT_VIEW(tab->output_view));
   total = gtk_text_buffer_get_line_count(buf);
   marked = 0;
   line = 0;
@@ -2191,17 +2328,17 @@ static void update_marked_label(AppWindow *win) {
   }
 
   if (total <= 0) {
-    gtk_label_set_text(GTK_LABEL(win->marked_label), "Marked lines: none");
+    gtk_label_set_text(GTK_LABEL(tab->marked_label), "Marked lines: none");
     return;
   }
 
   if (marked == 0) {
-    gtk_label_set_text(GTK_LABEL(win->marked_label), "Marked lines: none");
+    gtk_label_set_text(GTK_LABEL(tab->marked_label), "Marked lines: none");
     return;
   }
 
   if (marked == total) {
-    gtk_label_set_text(GTK_LABEL(win->marked_label), "Marked lines: all");
+    gtk_label_set_text(GTK_LABEL(tab->marked_label), "Marked lines: all");
     return;
   }
 
@@ -2222,20 +2359,20 @@ static void update_marked_label(AppWindow *win) {
     line++;
   }
 
-  gtk_label_set_text(GTK_LABEL(win->marked_label), label->str);
+  gtk_label_set_text(GTK_LABEL(tab->marked_label), label->str);
   g_string_free(label, TRUE);
 }
 
-static void apply_default_marks(AppWindow *win, GtkTextBuffer *buf) {
+static void apply_default_marks(Tab *tab, GtkTextBuffer *buf) {
   GtkTextIter iter;
   int i, total, line;
   gboolean mark_all;
   g_autofree char **parts = NULL;
 
-  if (g_strcmp0(win->marked_lines_str, "-1") == 0)
+  if (g_strcmp0(tab->marked_lines_str, "-1") == 0)
     return;
 
-  mark_all = (g_strcmp0(win->marked_lines_str, "0") == 0);
+  mark_all = (g_strcmp0(tab->marked_lines_str, "0") == 0);
 
   if (mark_all) {
     gtk_text_buffer_get_start_iter(buf, &iter);
@@ -2247,7 +2384,7 @@ static void apply_default_marks(AppWindow *win, GtkTextBuffer *buf) {
     return;
   }
 
-  parts = g_strsplit(win->marked_lines_str, ",", -1);
+  parts = g_strsplit(tab->marked_lines_str, ",", -1);
   total = gtk_text_buffer_get_line_count(buf);
   for (i = 0; parts[i] != NULL; i++) {
     line = (int)g_ascii_strtoll(parts[i], NULL, 10) - 1;
@@ -2259,13 +2396,13 @@ static void apply_default_marks(AppWindow *win, GtkTextBuffer *buf) {
   }
 }
 
-static char *get_marked_text(AppWindow *win) {
+static char *get_marked_text(Tab *tab) {
   GtkTextBuffer *buf;
   GString *result;
   GtkTextIter iter;
   int line;
 
-  buf = gtk_text_view_get_buffer(GTK_TEXT_VIEW(win->output_view));
+  buf = gtk_text_view_get_buffer(GTK_TEXT_VIEW(tab->output_view));
   result = g_string_new("");
   line = 0;
 
@@ -2298,10 +2435,15 @@ static char *get_marked_text(AppWindow *win) {
 /* ── state persistence ────────────────────────────────────────── */
 
 void app_window_save_state(AppWindow *win) {
+  Tab *tab;
   char *agent, *model;
 
-  agent = get_selected_text(win->agent_dropdown);
-  model = get_selected_text(win->model_dropdown);
+  tab = app_window_get_active_tab(win);
+  if (tab == NULL)
+    return;
+
+  agent = get_selected_text(tab->agent_dropdown);
+  model = get_selected_text(tab->model_dropdown);
   state_save(model, agent);
   g_free(agent);
   g_free(model);
@@ -2331,16 +2473,21 @@ static void select_option_by_value(GtkWidget *dropdown, const char *value) {
 }
 
 static void app_window_restore_state(AppWindow *win) {
+  Tab *tab;
   g_autofree char *model = NULL;
   g_autofree char *agent = NULL;
+
+  tab = app_window_get_active_tab(win);
+  if (tab == NULL)
+    return;
 
   if (!state_load(&model, &agent))
     return;
 
   if (model != NULL)
-    select_option_by_value(win->model_dropdown, model);
+    select_option_by_value(tab->model_dropdown, model);
   if (agent != NULL)
-    select_option_by_value(win->agent_dropdown, agent);
+    select_option_by_value(tab->agent_dropdown, agent);
 }
 
 /* ── CSS ───────────────────────────────────────────────────────── */

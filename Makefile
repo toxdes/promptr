@@ -26,6 +26,7 @@ else
 endif
 
 VERSION := $(shell cat VERSION)$(VER_SUFFIX)
+TARGET  := promptr$(VER_SUFFIX)
 
 CFLAGS  := -std=c11 $(WARN_FLAGS) $(OPT_FLAGS) -I. $(GTK_CFLAGS) $(LSH_CFLAGS) $(SV_CFLAGS) -DVERSION=\"$(VERSION)\" -DAPP_ID=\"$(APP_ID)\" $(DEBUG_FLAGS)
 LDFLAGS := $(GTK_LIBS) $(LSH_LIBS) $(SV_LIBS)
@@ -45,7 +46,7 @@ OBJECTS := $(patsubst $(SRCDIR)/%.c,$(BUILDDIR)/%.o,$(SOURCES))
 DEPS    := $(OBJECTS:.o=.d)
 
 $(TARGET): $(OBJECTS)
-	$(CC) $(OBJECTS) -o $@ $(LDFLAGS)
+	$(CC) $(OBJECTS) -o $(TARGET) $(LDFLAGS)
 
 $(BUILDDIR)/%.o: $(SRCDIR)/%.c | $(BUILDDIR)
 	$(CC) $(CFLAGS) -MMD -MP -MF $(BUILDDIR)/$*.d -c $< -o $@
@@ -56,7 +57,7 @@ $(BUILDDIR):
 -include $(DEPS)
 
 clean:
-	rm -rf build dist $(TARGET)
+	rm -rf build dist promptr promptr-debug
 
 install: $(TARGET)
 	install -D -m755 $(TARGET) $(DESTDIR)$(BINDIR)/$(TARGET)
