@@ -7,39 +7,44 @@
  * ~/.config/promptr/config (created on first launch).
  */
 
-#define DEFAULT_WIDTH         900
-#define DEFAULT_HEIGHT        700
+#define DEFAULT_WIDTH                    900
+#define DEFAULT_HEIGHT                   700
 
 /*
  * Keyboard shortcuts (GTK accelerator string format, e.g. "<Control>k").
  */
-#define KB_FOCUS_PROMPT       "<Control>k"
-#define KB_COPY_MARKED        "<Control><Shift>c"
-#define KB_CLOSE              "<Control>q"
-#define KB_QUIT               "<Control><Shift>q"
-#define KB_LOG                "<Control><Shift>d"
-#define KB_SHORTCUTS          "<Control>F1"
-#define KB_SUBMIT             "<Control>Return"
-#define KB_CANCEL             ""
+#define KB_FOCUS_PROMPT                  "<Control>k"
+#define KB_COPY_MARKED                   "<Control><Shift>c"
+#define KB_CLOSE                         "<Control>q"
+#define KB_QUIT                          "<Control><Shift>q"
+#define KB_LOG                           "<Control><Shift>d"
+#define KB_SHORTCUTS                     "<Control>F1"
+#define KB_SUBMIT                        "<Control>Return"
+#define KB_CANCEL                        ""
 
 /* UI layout ("horizontal" or "vertical") */
-#define LAYOUT_DEFAULT        "horizontal"
+#define LAYOUT_DEFAULT                   "horizontal"
 
 /* Toggle horizontal/vertical layout */
-#define KB_LAYOUT             "<Control>b"
+#define KB_LAYOUT                        "<Control>b"
 
 /* Pop out the output text area into its own window */
-#define KB_POPOUT             "<Control>o"
+#define KB_POPOUT                        "<Control>o"
 
 /* Tabs */
-#define KB_NEW_TAB            "<Control>t"
-#define KB_CLOSE_TAB          "<Control>w"
+#define KB_NEW_TAB                       "<Control>t"
+#define KB_CLOSE_TAB                     "<Control>w"
+#define KB_RESTORE_TAB                   "<Control><Shift>t"
+#define KB_FOLLOW_UP_TOGGLE              "<Control><Shift>f"
+#define TAB_POSITION_DEFAULT             "top"
+#define TAB_CONFIRM_BEFORE_CLOSE_DEFAULT 0
+#define TAB_SHOW_ADD_BUTTON_DEFAULT      1
 
 /* Layer-shell overlay on wlroots compositors (0 or 1) */
-#define LAYER_SHELL_ENABLED   0
+#define LAYER_SHELL_ENABLED              0
 
 /* Comma-separated options for Agent/Model pickers (first=default) */
-#define DEFAULT_AGENT_OPTIONS "linux_cmd,None"
+#define DEFAULT_AGENT_OPTIONS            "linux_cmd,None"
 #define DEFAULT_MODEL_OPTIONS                                                  \
   "opencode-go/deepseek-v4-flash,"                                             \
   "opencode-go/deepseek-v4-pro,"                                               \

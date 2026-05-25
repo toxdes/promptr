@@ -69,6 +69,16 @@ static const ConfigDefault CONFIG_DEFAULTS[] = {
     {"kb_popout", KB_POPOUT,
      "# Pop out the output text area into its own window"},
     {"layout", LAYOUT_DEFAULT, "# UI layout (\"horizontal\" or \"vertical\")"},
+    {"kb_new_tab", KB_NEW_TAB, "# Create new tab"},
+    {"kb_close_tab", KB_CLOSE_TAB, "# Close current tab"},
+    {"kb_restore_tab", KB_RESTORE_TAB, "# Restore last closed tab"},
+    {"kb_follow_up_toggle", KB_FOLLOW_UP_TOGGLE, "# Toggle follow-up checkbox"},
+    {"tab_position", TAB_POSITION_DEFAULT,
+     "# Tab bar position (\"top\" or \"bottom\")"},
+    {"tab_confirm_before_close", G_STRINGIFY(TAB_CONFIRM_BEFORE_CLOSE_DEFAULT),
+     "# Show confirmation dialog before closing active tabs (0 or 1)"},
+    {"tab_show_add_button", G_STRINGIFY(TAB_SHOW_ADD_BUTTON_DEFAULT),
+     "# Show the + (add new tab) button (0 or 1)"},
     {NULL, NULL, NULL}};
 
 static void migrate_config(const char *path, GKeyFile *kf) {

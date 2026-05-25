@@ -64,3 +64,24 @@ kb_popout=<Control>o
 
 # UI layout ("horizontal" or "vertical")
 layout=horizontal
+
+# Create new tab
+kb_new_tab=<Control>t
+
+# Close current tab
+kb_close_tab=<Control>w
+
+# Restore last closed tab
+kb_restore_tab=<Control><Shift>t
+
+# Toggle follow-up checkbox
+kb_follow_up_toggle=<Control><Shift>f
+
+# Tab bar position ("top" or "bottom")
+tab_position=top
+
+# Show confirmation dialog before closing active tabs (0 or 1)
+tab_confirm_before_close=0
+
+# Show the + (add new tab) button (0 or 1)
+tab_show_add_button=1
