@@ -1,18 +1,20 @@
 #ifndef TAB_H
 #define TAB_H
 
+#include "configfile.h"
 #include <gtk/gtk.h>
 
 typedef struct _AppWindow AppWindow;
 
 typedef struct {
-  int id;
+  char *id;
   char *name;
   char *page_name;
-  char *tab_file;
-  char *tmpdir_path;
   gboolean has_activity;
+  gboolean is_open;
   AppWindow *win;
+
+  char *tmpdir_path;
 
   GtkWidget *prompt_view;
   GtkWidget *placeholder_label;
@@ -66,8 +68,6 @@ typedef struct {
   gint64 start_time;
   int state;
 
-  GSList *temp_dirs;
-
   char *marked_lines_str;
 
   GtkWidget *tab_btn;
@@ -77,17 +77,22 @@ typedef struct {
   GtkWidget *tab_name_label;
   GtkWidget *rename_entry;
   gboolean has_unseen_output;
+  int ref_count;
 } Tab;
 
-Tab *tab_new(AppWindow *win, int id, const char *name);
-Tab *tab_load(AppWindow *win, int id, const char *filepath);
-void tab_free(Tab *tab);
+Tab *tab_new(AppWindow *win, const char *name);
+Tab *tab_ref(Tab *tab);
+void tab_unref(Tab *tab);
+Tab *tab_load(AppWindow *win, const char *uuid);
 void tab_save(Tab *tab);
+void tab_delete_saved(const char *uuid);
+void remove_dir(const char *path);
 
-void tab_apply_layout(Tab *tab);
-void tab_toggle_popout(Tab *tab);
-void tab_setup_tooltips(Tab *tab);
+void tab_auto_rename(Tab *tab);
 
-char *tab_get_trimmed_text(GtkWidget *text_view);
+GtkWidget *tab_create_widgets(Tab *tab, AppWindow *win);
+GtkWidget *tab_create_label(Tab *tab, int idx, AppWindow *win);
+char *get_selected_text(GtkWidget *dropdown);
+void set_selected_text(GtkWidget *dropdown, const char *text);
 
 #endif
