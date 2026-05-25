@@ -23,10 +23,10 @@ static void on_cancel(AppWindow *win);
 static void on_copy(AppWindow *win);
 static void on_close(AppWindow *win);
 static void on_quit(AppWindow *win);
-static void on_follow_up_toggled(AppWindow *win);
+static void on_follow_up_toggled(Tab *tab);
 static void update_submit_sensitivity(Tab *tab);
 static char *get_trimmed_text(GtkWidget *text_view);
-static char *get_selected_text(GtkWidget *dropdown);
+char *get_selected_text(GtkWidget *dropdown);
 static void set_prompt_focused(Tab *tab);
 
 static void set_loading_state(Tab *tab, const char *cmd);
@@ -51,9 +51,8 @@ static gboolean esc_arm_timeout_cb(gpointer data);
 static void disarm_escape(AppWindow *win);
 static gboolean status_pop_cb(gpointer data);
 static gboolean on_close_request(GtkWindow *window, gpointer user_data);
-static void on_prompt_changed(GtkTextBuffer *buffer, AppWindow *win);
-static void on_dropdown_changed(GObject *self, GParamSpec *pspec,
-                                AppWindow *win);
+static void on_prompt_changed(GtkTextBuffer *buffer, Tab *tab);
+static void on_dropdown_changed(GObject *self, GParamSpec *pspec, Tab *tab);
 static void update_cmd_preview(Tab *tab);
 static void on_log(AppWindow *win);
 static void on_log_close(AppWindow *win);
@@ -215,7 +214,7 @@ static GtkWidget *create_prompt_section(Tab *tab, AppWindow *win) {
     GtkEventController *key_ctrl;
 
     buffer = gtk_text_view_get_buffer(GTK_TEXT_VIEW(tab->prompt_view));
-    g_signal_connect(buffer, "changed", G_CALLBACK(on_prompt_changed), win);
+    g_signal_connect(buffer, "changed", G_CALLBACK(on_prompt_changed), tab);
 
     key_ctrl = gtk_event_controller_key_new();
     gtk_widget_add_controller(tab->prompt_view, key_ctrl);
@@ -232,6 +231,8 @@ static GtkWidget *create_prompt_section(Tab *tab, AppWindow *win) {
 static GtkWidget *create_follow_up_row(Tab *tab, AppWindow *win) {
   GtkWidget *furow;
 
+  (void)win;
+
   furow = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
   gtk_widget_set_margin_top(furow, 4);
   gtk_widget_set_margin_bottom(furow, 4);
@@ -240,7 +241,7 @@ static GtkWidget *create_follow_up_row(Tab *tab, AppWindow *win) {
       gtk_check_button_new_with_label("This prompt is a follow up");
   gtk_widget_set_sensitive(tab->follow_up_check, FALSE);
   g_signal_connect_swapped(tab->follow_up_check, "toggled",
-                           G_CALLBACK(on_follow_up_toggled), win);
+                           G_CALLBACK(on_follow_up_toggled), tab);
   gtk_box_append(GTK_BOX(furow), tab->follow_up_check);
 
   return furow;
@@ -275,7 +276,7 @@ static GtkWidget *create_agent_row(Tab *tab, AppWindow *win) {
   gtk_drop_down_set_selected(GTK_DROP_DOWN(tab->agent_dropdown), 0);
   gtk_widget_set_sensitive(tab->agent_dropdown, has_options);
   g_signal_connect(tab->agent_dropdown, "notify::selected",
-                   G_CALLBACK(on_dropdown_changed), win);
+                   G_CALLBACK(on_dropdown_changed), tab);
   gtk_box_append(GTK_BOX(row), tab->agent_dropdown);
   g_strfreev(opts);
   opts = NULL;
@@ -298,7 +299,7 @@ static GtkWidget *create_agent_row(Tab *tab, AppWindow *win) {
   gtk_drop_down_set_selected(GTK_DROP_DOWN(tab->model_dropdown), 0);
   gtk_widget_set_sensitive(tab->model_dropdown, has_options);
   g_signal_connect(tab->model_dropdown, "notify::selected",
-                   G_CALLBACK(on_dropdown_changed), win);
+                   G_CALLBACK(on_dropdown_changed), tab);
   gtk_box_append(GTK_BOX(row), tab->model_dropdown);
   g_strfreev(opts);
 
@@ -485,7 +486,7 @@ static void tab_switch_to(AppWindow *win, int idx);
 static void close_tab(AppWindow *win, int idx);
 static void on_new_tab_clicked(AppWindow *win);
 
-static GtkWidget *tab_create_widgets(Tab *tab, AppWindow *win) {
+GtkWidget *tab_create_widgets(Tab *tab, AppWindow *win) {
   GtkWidget *page;
 
   page = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
@@ -532,14 +533,15 @@ static GtkWidget *tab_create_widgets(Tab *tab, AppWindow *win) {
   return page;
 }
 
-static GtkWidget *tab_create_label(Tab *tab, int idx, AppWindow *win);
+GtkWidget *tab_create_label(Tab *tab, int idx, AppWindow *win);
 static void on_close_label_clicked(GtkGestureClick *gesture, int n_press,
                                    double x, double y, AppWindow *win);
 static void on_tab_label_clicked(GtkGestureClick *gesture, int n_press,
                                  double x, double y, AppWindow *win);
 static void on_tab_rename_activate(GtkEntry *entry, AppWindow *win);
 static void on_tab_rename_cancel(GtkEntry *entry, AppWindow *win);
-static void on_tab_focus_leave(GtkEventControllerFocus *ctrl, AppWindow *win);
+static void on_close_confirm_cb(GObject *source, GAsyncResult *result,
+                                gpointer user_data);
 static GdkContentProvider *on_tab_drag_prepare(GtkDragSource *source, double x,
                                                double y, AppWindow *win);
 static GdkDragAction on_tab_drop_motion(GtkDropTarget *drop, double x, double y,
@@ -585,7 +587,7 @@ static void tab_drop_indicator(AppWindow *win, int target_idx) {
   }
 }
 
-static GtkWidget *tab_create_label(Tab *tab, int idx, AppWindow *win) {
+GtkWidget *tab_create_label(Tab *tab, int idx, AppWindow *win) {
   GtkWidget *box, *label, *close_btn;
   const char *name;
 
@@ -654,6 +656,11 @@ static GtkWidget *tab_create_label(Tab *tab, int idx, AppWindow *win) {
   return box;
 }
 
+struct CloseCtx {
+  AppWindow *win;
+  int idx;
+};
+
 static void on_close_label_clicked(GtkGestureClick *gesture, int n_press,
                                    double x, double y, AppWindow *win) {
   GtkWidget *label;
@@ -671,9 +678,39 @@ static void on_close_label_clicked(GtkGestureClick *gesture, int n_press,
 
   for (i = 0; i < win->tabs->len; i++)
     if (g_ptr_array_index(win->tabs, i) == tab) {
+      if (tab->has_activity &&
+          runtime_config_get_bool(win->config, "tab_confirm_before_close",
+                                  TAB_CONFIRM_BEFORE_CLOSE_DEFAULT)) {
+        GtkAlertDialog *dlg;
+        const char *buttons[] = {"Cancel", "Close", NULL};
+        struct CloseCtx *ctx;
+
+        ctx = g_new(struct CloseCtx, 1);
+        ctx->win = win;
+        ctx->idx = (int)i;
+        dlg = gtk_alert_dialog_new("Close tab?");
+        gtk_alert_dialog_set_detail(dlg, "Close this tab?");
+        gtk_alert_dialog_set_buttons(dlg, buttons);
+        gtk_alert_dialog_choose(dlg, GTK_WINDOW(win->window), NULL,
+                                on_close_confirm_cb, ctx);
+        return;
+      }
       close_tab(win, (int)i);
       return;
     }
+}
+
+static void on_close_confirm_cb(GObject *source, GAsyncResult *result,
+                                gpointer user_data) {
+  struct CloseCtx *ctx = user_data;
+  GtkAlertDialog *dlg = GTK_ALERT_DIALOG(source);
+  int response;
+
+  response = gtk_alert_dialog_choose_finish(dlg, result, NULL);
+  if (response == 1)
+    close_tab(ctx->win, ctx->idx);
+  g_object_unref(dlg);
+  g_free(ctx);
 }
 
 static void on_tab_label_clicked(GtkGestureClick *gesture, int n_press,
@@ -744,6 +781,7 @@ static void on_tab_rename_activate(GtkEntry *entry, AppWindow *win) {
       g_free(tab->name);
       tab->name = g_strdup(new_name);
       tab->has_activity = TRUE;
+      tab_auto_rename(tab);
     }
 
     tab->rename_entry = NULL;
@@ -901,7 +939,7 @@ static Tab *add_new_tab(AppWindow *win) {
   int idx;
 
   name = g_strdup_printf("New Tab");
-  tab = tab_new(win, win->next_tab_id++, name);
+  tab = tab_new(win, name);
   tab->layout_mode = 0;
   tab->marked_lines_str = g_strdup(runtime_config_get_string(
       win->config, "marked_lines", DEFAULT_MARKED_LINES_STR));
@@ -925,6 +963,17 @@ static void close_tab(AppWindow *win, int idx) {
 
   if (idx < 0 || idx >= (int)win->tabs->len)
     return;
+
+  /* mark closed so it won't restore on next launch */
+  {
+    Tab *t;
+
+    t = g_ptr_array_index(win->tabs, idx);
+    if (t != NULL && t->has_activity) {
+      t->is_open = FALSE;
+      tab_save(t);
+    }
+  }
 
   g_ptr_array_remove_index(win->tabs, idx);
   gtk_notebook_remove_page(GTK_NOTEBOOK(win->tab_bar), idx);
@@ -1080,15 +1129,6 @@ static void on_tab_drop_leave(GtkDropTarget *drop, AppWindow *win) {
   tab_drop_indicator(win, -1);
 }
 
-static void on_tab_focus_leave(GtkEventControllerFocus *ctrl, AppWindow *win) {
-  GtkWidget *w;
-
-  w = gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(ctrl));
-  if (w != NULL && GTK_IS_ENTRY(w) &&
-      g_object_get_data(G_OBJECT(w), "rename-done") == NULL)
-    on_tab_rename_cancel(GTK_ENTRY(w), win);
-}
-
 static void on_new_tab_clicked(AppWindow *win) {
   Tab *tab;
 
@@ -1097,6 +1137,81 @@ static void on_new_tab_clicked(AppWindow *win) {
   apply_layout(tab);
   setup_tooltips(tab, win);
   update_cmd_preview(tab);
+}
+
+static void on_restore_tab(AppWindow *win) {
+  g_autofree char *dir = NULL;
+  GDir *gdir;
+  const char *name;
+  g_autofree char *best_uuid = NULL;
+  g_autofree char *best_time = NULL;
+
+  {
+    const char *data_dir;
+
+    data_dir = g_get_user_data_dir();
+    dir = g_build_filename(data_dir, DATA_DIR_SUFFIX, "tabs", NULL);
+  }
+
+  gdir = g_dir_open(dir, 0, NULL);
+  if (gdir == NULL)
+    return;
+
+  for (;;) {
+    name = g_dir_read_name(gdir);
+    if (name == NULL)
+      break;
+    if (!g_str_has_suffix(name, ".conf"))
+      continue;
+
+    {
+      g_autofree char *path = NULL;
+      g_autoptr(GKeyFile) kf = NULL;
+      g_autofree char *uuid = NULL;
+      gboolean is_open;
+      gboolean has_activity;
+      g_autofree char *time_str = NULL;
+
+      path = g_build_filename(dir, name, NULL);
+      kf = g_key_file_new();
+      if (!g_key_file_load_from_file(kf, path, G_KEY_FILE_NONE, NULL))
+        continue;
+
+      is_open = g_key_file_get_boolean(kf, "tab", "is_open", NULL);
+      has_activity = g_key_file_get_boolean(kf, "tab", "has_activity", NULL);
+      if (is_open || !has_activity)
+        continue;
+
+      uuid = g_strndup(name, strlen(name) - 5);
+      time_str = g_key_file_get_string(kf, "tab", "time", NULL);
+
+      if (best_time == NULL ||
+          (time_str != NULL && g_strcmp0(time_str, best_time) > 0)) {
+        g_free(best_uuid);
+        g_free(best_time);
+        best_uuid = g_strdup(uuid);
+        best_time = g_strdup(time_str);
+      }
+    }
+  }
+  g_dir_close(gdir);
+
+  if (best_uuid == NULL)
+    return;
+
+  {
+    Tab *tab;
+
+    tab = tab_load(win, best_uuid);
+    if (tab != NULL) {
+      tab->is_open = TRUE;
+      tab_save(tab);
+      gtk_notebook_set_current_page(GTK_NOTEBOOK(win->tab_bar),
+                                    win->tabs->len - 1);
+      apply_layout(tab);
+      setup_tooltips(tab, win);
+    }
+  }
 }
 
 static void on_tab_bar_double_click(GtkGestureClick *gesture, int n_press,
@@ -1484,6 +1599,13 @@ AppWindow *app_window_new(GtkApplication *app) {
   gtk_accelerator_parse(kb, &win->kb_new_tab_keyval, &win->kb_new_tab_mods);
   kb = runtime_config_get_string(win->config, "kb_close_tab", KB_CLOSE_TAB);
   gtk_accelerator_parse(kb, &win->kb_close_tab_keyval, &win->kb_close_tab_mods);
+  kb = runtime_config_get_string(win->config, "kb_restore_tab", KB_RESTORE_TAB);
+  gtk_accelerator_parse(kb, &win->kb_restore_tab_keyval,
+                        &win->kb_restore_tab_mods);
+  kb = runtime_config_get_string(win->config, "kb_follow_up_toggle",
+                                 KB_FOLLOW_UP_TOGGLE);
+  gtk_accelerator_parse(kb, &win->kb_follow_up_toggle_keyval,
+                        &win->kb_follow_up_toggle_mods);
 
   {
     struct {
@@ -1503,6 +1625,9 @@ AppWindow *app_window_new(GtkApplication *app) {
         {"popout", win->kb_popout_keyval, win->kb_popout_mods},
         {"new_tab", win->kb_new_tab_keyval, win->kb_new_tab_mods},
         {"close_tab", win->kb_close_tab_keyval, win->kb_close_tab_mods},
+        {"restore_tab", win->kb_restore_tab_keyval, win->kb_restore_tab_mods},
+        {"follow_up_toggle", win->kb_follow_up_toggle_keyval,
+         win->kb_follow_up_toggle_mods},
     };
     gboolean conflict = FALSE;
     int n = (int)G_N_ELEMENTS(binds);
@@ -1519,8 +1644,7 @@ AppWindow *app_window_new(GtkApplication *app) {
         }
   }
 
-  win->tabs = g_ptr_array_new_with_free_func((GDestroyNotify)tab_free);
-  win->next_tab_id = 1;
+  win->tabs = g_ptr_array_new_with_free_func((GDestroyNotify)tab_unref);
 
   win->window = gtk_window_new();
   gtk_window_set_application(GTK_WINDOW(win->window), app);
@@ -1582,6 +1706,15 @@ AppWindow *app_window_new(GtkApplication *app) {
 
   win->tab_bar = gtk_notebook_new();
   gtk_notebook_set_scrollable(GTK_NOTEBOOK(win->tab_bar), TRUE);
+  {
+    g_autofree char *pos = NULL;
+
+    pos = runtime_config_get_string(win->config, "tab_position",
+                                    TAB_POSITION_DEFAULT);
+    gtk_notebook_set_tab_pos(GTK_NOTEBOOK(win->tab_bar),
+                             g_strcmp0(pos, "bottom") == 0 ? GTK_POS_BOTTOM
+                                                           : GTK_POS_TOP);
+  }
   gtk_widget_set_vexpand(win->tab_bar, TRUE);
 
   {
@@ -1611,7 +1744,8 @@ AppWindow *app_window_new(GtkApplication *app) {
   g_signal_connect(win->tab_bar, "switch-page",
                    G_CALLBACK(on_notebook_page_switched), win);
 
-  {
+  if (runtime_config_get_bool(win->config, "tab_show_add_button",
+                              TAB_SHOW_ADD_BUTTON_DEFAULT)) {
     GtkWidget *add_btn;
 
     add_btn = gtk_button_new_with_label("+");
@@ -1622,8 +1756,65 @@ AppWindow *app_window_new(GtkApplication *app) {
                                    GTK_PACK_START);
   }
 
-  tab = add_new_tab(win);
-  gtk_notebook_set_current_page(GTK_NOTEBOOK(win->tab_bar), 0);
+  /* load persisted tabs that were open last session */
+  {
+    g_autofree char *dir = NULL;
+    GDir *gdir;
+    const char *name;
+    int loaded;
+
+    {
+      const char *data_dir;
+
+      data_dir = g_get_user_data_dir();
+      dir = g_build_filename(data_dir, DATA_DIR_SUFFIX, "tabs", NULL);
+    }
+
+    loaded = 0;
+    gdir = g_dir_open(dir, 0, NULL);
+    if (gdir != NULL) {
+      for (;;) {
+        name = g_dir_read_name(gdir);
+        if (name == NULL)
+          break;
+        if (!g_str_has_suffix(name, ".conf"))
+          continue;
+
+        {
+          g_autofree char *path = NULL;
+          g_autoptr(GKeyFile) kf = NULL;
+          gboolean is_open;
+          g_autofree char *uuid = NULL;
+
+          path = g_build_filename(dir, name, NULL);
+          kf = g_key_file_new();
+          if (!g_key_file_load_from_file(kf, path, G_KEY_FILE_NONE, NULL)) {
+            continue;
+          }
+
+          is_open = g_key_file_get_boolean(kf, "tab", "is_open", NULL);
+          if (!is_open)
+            continue;
+
+          uuid = g_strndup(name, strlen(name) - 5);
+          {
+            Tab *t;
+
+            t = tab_load(win, uuid);
+            if (t != NULL)
+              loaded++;
+          }
+        }
+      }
+      g_dir_close(gdir);
+    }
+
+    /* always add a fresh tab on top */
+    tab = add_new_tab(win);
+    gtk_notebook_set_current_page(GTK_NOTEBOOK(win->tab_bar),
+                                  win->tabs->len - 1);
+  }
+
   setup_tooltips(tab, win);
   apply_layout(tab);
   app_window_restore_state(win);
@@ -1647,45 +1838,82 @@ void app_window_present(AppWindow *win) {
     set_prompt_focused(tab);
 }
 
-static void remove_temp_dirs(Tab *tab) {
-  GSList *l;
-  GDir *dir;
-  const char *name;
-  g_autofree char *path = NULL;
-
-  if (tab->temp_dirs == NULL)
-    return;
-
-  for (l = tab->temp_dirs; l != NULL; l = l->next) {
-    dir = g_dir_open((const char *)l->data, 0, NULL);
-    if (dir != NULL) {
-      while ((name = g_dir_read_name(dir)) != NULL) {
-        path = g_build_filename((const char *)l->data, name, NULL);
-        unlink(path);
-      }
-      g_dir_close(dir);
-    }
-    rmdir((const char *)l->data);
-    g_free(l->data);
-  }
-  g_slist_free(tab->temp_dirs);
-  tab->temp_dirs = NULL;
-}
-
 void app_window_close_and_quit(AppWindow *win) {
   guint i;
 
   if (win == NULL)
     return;
 
+  /* save tabs before destroying widgets */
+  for (i = 0; i < win->tabs->len; i++) {
+    Tab *tab;
+
+    tab = g_ptr_array_index(win->tabs, i);
+    if (tab != NULL && tab->has_activity) {
+      tab->is_open = TRUE;
+      tab_save(tab);
+    }
+  }
+
+  /* remove saved files for tabs closed before quit (is_open=false) */
+  {
+    g_autofree char *dir = NULL;
+    GDir *gdir;
+    const char *name;
+
+    {
+      const char *data_dir;
+
+      data_dir = g_get_user_data_dir();
+      dir = g_build_filename(data_dir, DATA_DIR_SUFFIX, "tabs", NULL);
+    }
+
+    gdir = g_dir_open(dir, 0, NULL);
+    if (gdir != NULL) {
+      for (;;) {
+        name = g_dir_read_name(gdir);
+        if (name == NULL)
+          break;
+        if (!g_str_has_suffix(name, ".conf"))
+          continue;
+
+        {
+          g_autofree char *path = NULL;
+          g_autoptr(GKeyFile) kf = NULL;
+          gboolean is_open;
+
+          path = g_build_filename(dir, name, NULL);
+          kf = g_key_file_new();
+          if (g_key_file_load_from_file(kf, path, G_KEY_FILE_NONE, NULL)) {
+            is_open = g_key_file_get_boolean(kf, "tab", "is_open", NULL);
+            if (!is_open) {
+              g_autofree char *uuid = NULL;
+
+              uuid = g_strndup(name, strlen(name) - 5);
+              tab_delete_saved(uuid);
+              {
+                g_autofree char *tmp_path = NULL;
+                const char *data_dir2;
+
+                data_dir2 = g_get_user_data_dir();
+                tmp_path = g_build_filename(data_dir2, DATA_DIR_SUFFIX, "tmp",
+                                            uuid, NULL);
+                remove_dir(tmp_path);
+              }
+            }
+          }
+        }
+      }
+      g_dir_close(gdir);
+    }
+  }
+
   for (i = 0; i < win->tabs->len; i++) {
     Tab *tab = g_ptr_array_index(win->tabs, i);
 
-    remove_temp_dirs(tab);
-    if (tab->subprocess != NULL)
+    if (tab->subprocess != NULL) {
       command_cancel(tab);
-    if (tab->cancellable != NULL)
-      g_cancellable_cancel(tab->cancellable);
+    }
   }
 
   if (win->log_popup != NULL)
@@ -1772,7 +2000,8 @@ static void set_finished_state(Tab *tab, char *cmd, gint64 elapsed,
     tab->has_unseen_output = FALSE;
   tab_update_status_dot(tab);
 
-  set_status_text(win, "Ready");
+  if (app_window_get_active_tab(win) == tab)
+    set_status_text(win, "Ready");
 
   ms = elapsed / 1000;
   if (output != NULL && output[0] != '\0') {
@@ -1816,7 +2045,8 @@ static void set_finished_state(Tab *tab, char *cmd, gint64 elapsed,
 
   gtk_button_set_label(GTK_BUTTON(tab->submit_btn), "Submit");
   update_submit_sensitivity(tab);
-  set_prompt_focused(tab);
+  if (app_window_get_active_tab(win) == tab)
+    set_prompt_focused(tab);
 }
 
 static void set_canceled_state(Tab *tab, char *cmd) {
@@ -1827,15 +2057,18 @@ static void set_canceled_state(Tab *tab, char *cmd) {
   tab->state = STATE_CANCELED;
 
   tab_update_status_dot(tab);
-  set_status_text(win, "Interrupted");
-  g_timeout_add(2000, (GSourceFunc)status_pop_cb, win->status_bar);
+  if (app_window_get_active_tab(win) == tab) {
+    set_status_text(win, "Interrupted");
+    g_timeout_add(2000, (GSourceFunc)status_pop_cb, win->status_bar);
+  }
 
   log_append(win, "cancel → Cancelled.");
   g_free(cmd);
 
   gtk_button_set_label(GTK_BUTTON(tab->submit_btn), "Submit");
   update_submit_sensitivity(tab);
-  set_prompt_focused(tab);
+  if (app_window_get_active_tab(win) == tab)
+    set_prompt_focused(tab);
 }
 
 static void set_errored_state(Tab *tab, char *cmd, const char *stderr_output) {
@@ -1853,7 +2086,8 @@ static void set_errored_state(Tab *tab, char *cmd, const char *stderr_output) {
     tab->has_unseen_output = FALSE;
   tab_update_status_dot(tab);
 
-  set_status_text(win, "Ready");
+  if (app_window_get_active_tab(win) == tab)
+    set_status_text(win, "Ready");
 
   if (stderr_output != NULL && stderr_output[0] != '\0') {
     const char *nl;
@@ -1878,10 +2112,9 @@ static void set_errored_state(Tab *tab, char *cmd, const char *stderr_output) {
 
   gtk_button_set_label(GTK_BUTTON(tab->submit_btn), "Submit");
   update_submit_sensitivity(tab);
-  set_prompt_focused(tab);
+  if (app_window_get_active_tab(win) == tab)
+    set_prompt_focused(tab);
 }
-
-/* ── submit ────────────────────────────────────────────────────── */
 
 static void on_submit(AppWindow *win) {
   Tab *tab;
@@ -1891,7 +2124,6 @@ static void on_submit(AppWindow *win) {
   GtkTextBuffer *outbuf;
   g_autofree char *tmpdir = NULL;
   gboolean is_follow_up;
-  GError *err = NULL;
 
   tab = app_window_get_active_tab(win);
   if (tab == NULL)
@@ -1905,24 +2137,25 @@ static void on_submit(AppWindow *win) {
     return;
   }
 
+  tab->has_activity = TRUE;
+  tab_auto_rename(tab);
+
   agent = get_selected_text(tab->agent_dropdown);
   model = get_selected_text(tab->model_dropdown);
 
   tab->follow_up_active = tab->follow_up;
 
-  if (tab->follow_up_active && tab->tmpdir_path != NULL) {
+  if (tab->follow_up_active && tab->tmpdir_path != NULL &&
+      g_file_test(tab->tmpdir_path, G_FILE_TEST_IS_DIR)) {
     is_follow_up = TRUE;
   } else {
     is_follow_up = FALSE;
     tab->follow_up_active = FALSE;
 
-    tmpdir = g_dir_make_tmp(DATA_DIR_SUFFIX "-XXXXXX", &err);
-    if (tmpdir == NULL) {
-      g_warning("Failed to create temp dir: %s", err->message);
-      g_clear_error(&err);
-    } else {
-      g_free(tab->tmpdir_path);
-      tab->tmpdir_path = g_strdup(tmpdir);
+    if (tab->tmpdir_path != NULL)
+      remove_dir(tab->tmpdir_path);
+    if (g_mkdir_with_parents(tab->tmpdir_path, 0700) == 0) {
+      tmpdir = g_strdup(tab->tmpdir_path);
       gtk_widget_set_sensitive(tab->follow_up_check, TRUE);
     }
   }
@@ -1972,10 +2205,9 @@ static void on_submit(AppWindow *win) {
                   is_follow_up, command_finished_cb);
 
   if (tab->subprocess != NULL && tmpdir != NULL && !is_follow_up)
-    tab->temp_dirs = g_slist_prepend(tab->temp_dirs, g_strdup(tmpdir));
 
-  if (tab->subprocess != NULL)
-    set_loading_state(tab, cmd_display);
+    if (tab->subprocess != NULL)
+      set_loading_state(tab, cmd_display);
 
   g_free(query);
   g_free(agent);
@@ -2020,11 +2252,7 @@ static void on_cancel(AppWindow *win) {
   command_cancel(tab);
 }
 
-static void on_follow_up_toggled(AppWindow *win) {
-  Tab *tab = app_window_get_active_tab(win);
-
-  if (tab == NULL)
-    return;
+static void on_follow_up_toggled(Tab *tab) {
   tab->follow_up =
       gtk_check_button_get_active(GTK_CHECK_BUTTON(tab->follow_up_check));
   update_cmd_preview(tab);
@@ -2547,6 +2775,23 @@ static gboolean on_window_key_pressed(GtkEventControllerKey *controller,
     return GDK_EVENT_STOP;
   }
 
+  /* ctrl+shift+t: restore last closed tab */
+  if (win->kb_restore_tab_keyval != 0 && keyval == win->kb_restore_tab_keyval &&
+      mods == win->kb_restore_tab_mods) {
+    on_restore_tab(win);
+    return GDK_EVENT_STOP;
+  }
+
+  /* ctrl+shift+f: toggle follow-up checkbox */
+  if (win->kb_follow_up_toggle_keyval != 0 &&
+      keyval == win->kb_follow_up_toggle_keyval &&
+      mods == win->kb_follow_up_toggle_mods) {
+    if (tab != NULL && gtk_widget_is_sensitive(tab->follow_up_check))
+      gtk_check_button_set_active(GTK_CHECK_BUTTON(tab->follow_up_check),
+                                  !tab->follow_up);
+    return GDK_EVENT_STOP;
+  }
+
   /* alt+1..9: switch to tab */
   if (keyval >= GDK_KEY_1 && keyval <= GDK_KEY_9 && mods == GDK_ALT_MASK) {
     int idx;
@@ -2562,9 +2807,7 @@ static gboolean on_window_key_pressed(GtkEventControllerKey *controller,
 
 /* ── prompt change ─────────────────────────────────────────────── */
 
-static void on_prompt_changed(GtkTextBuffer *buffer, AppWindow *win) {
-  Tab *tab = app_window_get_active_tab(win);
-
+static void on_prompt_changed(GtkTextBuffer *buffer, Tab *tab) {
   (void)buffer;
 
   if (tab == NULL)
@@ -2623,7 +2866,7 @@ static char *get_trimmed_text(GtkWidget *text_view) {
   return result;
 }
 
-static char *get_selected_text(GtkWidget *dropdown) {
+char *get_selected_text(GtkWidget *dropdown) {
   guint pos;
   GListModel *model;
   GObject *item;
@@ -2642,6 +2885,28 @@ static char *get_selected_text(GtkWidget *dropdown) {
   char *result = g_strdup(str != NULL ? str : "None");
   g_object_unref(item);
   return result;
+}
+
+void set_selected_text(GtkWidget *dropdown, const char *text) {
+  guint i;
+  GListModel *model;
+  guint n;
+
+  model = gtk_drop_down_get_model(GTK_DROP_DOWN(dropdown));
+  n = g_list_model_get_n_items(model);
+  for (i = 0; i < n; i++) {
+    GObject *item;
+    const char *str;
+
+    item = g_list_model_get_item(model, i);
+    str = gtk_string_object_get_string(GTK_STRING_OBJECT(item));
+    if (g_strcmp0(str, text) == 0) {
+      gtk_drop_down_set_selected(GTK_DROP_DOWN(dropdown), i);
+      g_object_unref(item);
+      return;
+    }
+    g_object_unref(item);
+  }
 }
 
 static char *accel_to_human(const char *accel) {
@@ -2859,15 +3124,12 @@ static gboolean hex_to_rgba(const char *hex, GdkRGBA *out) {
 
 /* ── dropdown change ──────────────────────────────────────────── */
 
-static void on_dropdown_changed(GObject *self, GParamSpec *pspec,
-                                AppWindow *win) {
-  Tab *tab;
+static void on_dropdown_changed(GObject *self, GParamSpec *pspec, Tab *tab) {
   char *agent, *model;
 
   (void)self;
   (void)pspec;
 
-  tab = app_window_get_active_tab(win);
   if (tab == NULL)
     return;
 

@@ -47,13 +47,16 @@ typedef struct _AppWindow {
 
   GPtrArray *tabs;
   int active_tab_idx;
-  int next_tab_id;
   GtkWidget *tab_bar;
 
   guint kb_new_tab_keyval;
   GdkModifierType kb_new_tab_mods;
   guint kb_close_tab_keyval;
   GdkModifierType kb_close_tab_mods;
+  guint kb_restore_tab_keyval;
+  GdkModifierType kb_restore_tab_mods;
+  guint kb_follow_up_toggle_keyval;
+  GdkModifierType kb_follow_up_toggle_mods;
 
   int tab_position;
   gboolean tab_confirm_before_close;
