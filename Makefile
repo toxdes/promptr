@@ -14,15 +14,15 @@ BUILD ?= release
 ifeq ($(BUILD),debug)
   OPT_FLAGS  := -Og -ggdb3
   WARN_FLAGS := -Wall -Wextra -pedantic
-  VER_SUFFIX := -debug
   APP_ID     := com.toxdes.promptr-debug
   DEBUG_FLAGS  := -DDEBUG_BUILD
+  VER_SUFFIX := -debug
 else
   OPT_FLAGS  := -O2
   WARN_FLAGS := -Wall -Wextra -Werror -pedantic
-  VER_SUFFIX :=
   APP_ID     := com.toxdes.promptr
   DEBUG_FLAGS  :=
+  VER_SUFFIX :=
 endif
 
 VERSION := $(shell cat VERSION)$(VER_SUFFIX)
@@ -33,7 +33,6 @@ LDFLAGS := $(GTK_LIBS) $(LSH_LIBS) $(SV_LIBS)
 
 SRCDIR   := src
 BUILDDIR := build/$(BUILD)
-TARGET   := promptr
 
 PREFIX ?= /usr/local
 BINDIR  = $(PREFIX)/bin
@@ -46,7 +45,7 @@ OBJECTS := $(patsubst $(SRCDIR)/%.c,$(BUILDDIR)/%.o,$(SOURCES))
 DEPS    := $(OBJECTS:.o=.d)
 
 $(TARGET): $(OBJECTS)
-	$(CC) $(OBJECTS) -o $(TARGET) $(LDFLAGS)
+	$(CC) $(OBJECTS) -o $@ $(LDFLAGS)
 
 $(BUILDDIR)/%.o: $(SRCDIR)/%.c | $(BUILDDIR)
 	$(CC) $(CFLAGS) -MMD -MP -MF $(BUILDDIR)/$*.d -c $< -o $@
@@ -68,7 +67,7 @@ install: $(TARGET)
 uninstall:
 	rm -f $(DESTDIR)$(BINDIR)/$(TARGET)
 
-.PHONY: clean install uninstall debug release r config check-config
+.PHONY: clean install uninstall debug release r config
 
 debug:
 	$(MAKE) BUILD=debug
@@ -76,10 +75,14 @@ debug:
 release:
 	$(MAKE) BUILD=release
 
-r: clean debug
-	./$(TARGET)
+r:
+	$(MAKE) clean
+	$(MAKE) BUILD=debug
+	./promptr-debug
 
-config: clean $(TARGET)
+config:
+	$(MAKE) clean
+	$(MAKE) BUILD=release
 	@rm -rf /tmp/promptr-config-check
 	@mkdir -p /tmp/promptr-config-check/.config
 	@printf "Checking generated config against repo template...\n"
