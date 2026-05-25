@@ -2,10 +2,38 @@
 
 ## Build
 
-- `make` — debug build with `-Og -ggdb3` and `-pedantic` (default)
-- `make release` — release build with `-O2` and `-Werror`
-- After editing `.c` / `.h` files, run `make` (not release) — CI handles release
+- `make debug` — debug build with `-Og -ggdb3` and `-pedantic` (no `-Werror`)
+- `make r` — clean + debug build + run
+- `make` — release build with `-O2` and `-Werror` (for final testing only)
+- After editing `.c` / `.h` files, run `make debug` (never `make` / `make release` unless explicitly asked)
+- Never run `make release` unless the user explicitly asks for it
 - Before committing, run `./format-all.py`
+
+## Commits
+
+- Commits will be reviewed by humans — write clear, descriptive messages
+- Follow the existing conventional commit style: `type: short description`
+  - `feat:` — new feature or behavior change
+  - `fix:` — bug fix
+  - `build:` — build system or dependencies
+  - `docs:` — documentation only
+  - `chore:` — maintenance, version bumps, formatting
+- Independent changes belong in separate commits to make review easier
+- Do not commit until explicitly asked
+
+## Safety
+
+- **Never** run `git checkout` — it has wiped uncommitted work before
+- **Never** commit unless explicitly asked to
+- **Never** push unless explicitly asked to
+- **Never** run destructive commands (`rm -rf`, `git reset --hard`, etc.) unless explicitly asked
+- Do not assume changes have been committed — always check `git status` first
+- If unsure whether a command is destructive, ask
+
+## Running
+
+- Never run `./promptr` or `./promptr-debug` unless explicitly asked
+- `make debug` is sufficient to verify compilation — you don't need to launch the app
 
 ## Code style
 
