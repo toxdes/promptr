@@ -31,6 +31,10 @@
 /* Pop out the output text area into its own window */
 #define KB_POPOUT             "<Control>o"
 
+/* Tabs */
+#define KB_NEW_TAB            "<Control>t"
+#define KB_CLOSE_TAB          "<Control>w"
+
 /* Layer-shell overlay on wlroots compositors (0 or 1) */
 #define LAYER_SHELL_ENABLED   0
 
