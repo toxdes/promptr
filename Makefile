@@ -9,21 +9,25 @@ LSH_LIBS    := $(shell $(PKG_CONF) --libs $(LSH_PKG))
 SV_CFLAGS   := $(shell $(PKG_CONF) --cflags gtksourceview-5 | sed 's/-I/-isystem /g')
 SV_LIBS     := $(shell $(PKG_CONF) --libs gtksourceview-5)
 
-BUILD ?= debug
+BUILD ?= release
 
 ifeq ($(BUILD),debug)
   OPT_FLAGS  := -Og -ggdb3
   WARN_FLAGS := -Wall -Wextra -pedantic
   VER_SUFFIX := -debug
+  APP_ID     := com.toxdes.promptr-debug
+  DEBUG_FLAGS  := -DDEBUG_BUILD
 else
   OPT_FLAGS  := -O2
   WARN_FLAGS := -Wall -Wextra -Werror -pedantic
   VER_SUFFIX :=
+  APP_ID     := com.toxdes.promptr
+  DEBUG_FLAGS  :=
 endif
 
 VERSION := $(shell cat VERSION)$(VER_SUFFIX)
 
-CFLAGS  := -std=c11 $(WARN_FLAGS) $(OPT_FLAGS) -I. $(GTK_CFLAGS) $(LSH_CFLAGS) $(SV_CFLAGS) -DVERSION=\"$(VERSION)\"
+CFLAGS  := -std=c11 $(WARN_FLAGS) $(OPT_FLAGS) -I. $(GTK_CFLAGS) $(LSH_CFLAGS) $(SV_CFLAGS) -DVERSION=\"$(VERSION)\" -DAPP_ID=\"$(APP_ID)\" $(DEBUG_FLAGS)
 LDFLAGS := $(GTK_LIBS) $(LSH_LIBS) $(SV_LIBS)
 
 SRCDIR   := src
@@ -71,7 +75,7 @@ debug:
 release:
 	$(MAKE) BUILD=release
 
-r: clean $(TARGET)
+r: clean debug
 	./$(TARGET)
 
 config: clean $(TARGET)

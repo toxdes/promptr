@@ -1,8 +1,12 @@
 #include "configfile.h"
 #include "config.h"
+#include <gtk/gtk.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 
 #define GROUP       "preferences"
-#define CONFIG_DIR  "promptr"
+#define CONFIG_DIR  DATA_DIR_SUFFIX
 #define CONFIG_FILE "config"
 
 struct _RuntimeConfig {

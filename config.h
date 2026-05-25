@@ -77,4 +77,15 @@
 #define VERSION "unknown"
 #endif
 
+/*
+ * Build-specific data directory suffix:
+ *   release → "promptr"
+ *   debug   → "promptr-debug"
+ */
+#ifdef DEBUG_BUILD
+#define DATA_DIR_SUFFIX "promptr-debug"
+#else
+#define DATA_DIR_SUFFIX "promptr"
+#endif
+
 #endif

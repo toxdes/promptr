@@ -50,7 +50,7 @@ int main(int argc, char *argv[]) {
     g_setenv("GSK_RENDERER", renderer, FALSE);
   }
 
-  g_set_prgname("promptr");
+  g_set_prgname(DATA_DIR_SUFFIX);
   gtk_source_init();
   app = gtk_application_new("com.toxdes.promptr", G_APPLICATION_DEFAULT_FLAGS);
   g_signal_connect(app, "activate", G_CALLBACK(on_activate), NULL);
