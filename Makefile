@@ -9,26 +9,30 @@ LSH_LIBS    := $(shell $(PKG_CONF) --libs $(LSH_PKG))
 SV_CFLAGS   := $(shell $(PKG_CONF) --cflags gtksourceview-5 | sed 's/-I/-isystem /g')
 SV_LIBS     := $(shell $(PKG_CONF) --libs gtksourceview-5)
 
-BUILD ?= debug
+BUILD ?= release
 
 ifeq ($(BUILD),debug)
   OPT_FLAGS  := -Og -ggdb3
   WARN_FLAGS := -Wall -Wextra -pedantic
+  APP_ID     := com.toxdes.promptr-debug
+  DEBUG_FLAGS  := -DDEBUG_BUILD
   VER_SUFFIX := -debug
 else
   OPT_FLAGS  := -O2
   WARN_FLAGS := -Wall -Wextra -Werror -pedantic
+  APP_ID     := com.toxdes.promptr
+  DEBUG_FLAGS  :=
   VER_SUFFIX :=
 endif
 
 VERSION := $(shell cat VERSION)$(VER_SUFFIX)
+TARGET  := promptr$(VER_SUFFIX)
 
-CFLAGS  := -std=c11 $(WARN_FLAGS) $(OPT_FLAGS) -I. $(GTK_CFLAGS) $(LSH_CFLAGS) $(SV_CFLAGS) -DVERSION=\"$(VERSION)\"
+CFLAGS  := -std=c11 $(WARN_FLAGS) $(OPT_FLAGS) -I. $(GTK_CFLAGS) $(LSH_CFLAGS) $(SV_CFLAGS) -DVERSION=\"$(VERSION)\" -DAPP_ID=\"$(APP_ID)\" $(DEBUG_FLAGS)
 LDFLAGS := $(GTK_LIBS) $(LSH_LIBS) $(SV_LIBS)
 
 SRCDIR   := src
 BUILDDIR := build/$(BUILD)
-TARGET   := promptr
 
 PREFIX ?= /usr/local
 BINDIR  = $(PREFIX)/bin
@@ -52,7 +56,7 @@ $(BUILDDIR):
 -include $(DEPS)
 
 clean:
-	rm -rf build dist $(TARGET)
+	rm -rf build dist promptr promptr-debug
 
 install: $(TARGET)
 	install -D -m755 $(TARGET) $(DESTDIR)$(BINDIR)/$(TARGET)
@@ -63,7 +67,7 @@ install: $(TARGET)
 uninstall:
 	rm -f $(DESTDIR)$(BINDIR)/$(TARGET)
 
-.PHONY: clean install uninstall debug release r config check-config
+.PHONY: clean install uninstall debug release r config
 
 debug:
 	$(MAKE) BUILD=debug
@@ -71,10 +75,14 @@ debug:
 release:
 	$(MAKE) BUILD=release
 
-r: clean $(TARGET)
-	./$(TARGET)
+r:
+	$(MAKE) clean
+	$(MAKE) BUILD=debug
+	./promptr-debug
 
-config: clean $(TARGET)
+config:
+	$(MAKE) clean
+	$(MAKE) BUILD=release
 	@rm -rf /tmp/promptr-config-check
 	@mkdir -p /tmp/promptr-config-check/.config
 	@printf "Checking generated config against repo template...\n"

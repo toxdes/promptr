@@ -2,46 +2,26 @@
 #define WINDOW_H
 
 #include "configfile.h"
+#include "tab.h"
 #include <gtk/gtk.h>
 
 typedef struct _AppWindow {
   GtkApplication *app;
   GtkWidget *window;
-  GtkWidget *prompt_view;
-  GtkWidget *placeholder_label;
-  GtkWidget *agent_dropdown;
-  GtkWidget *model_dropdown;
-  GtkWidget *submit_btn;
   GtkWidget *cmd_label;
-  GtkWidget *cancel_btn;
-  GtkWidget *spinner;
-  GtkWidget *output_scroll;
-  GtkWidget *output_view;
-  GtkWidget *copy_btn;
-  GtkWidget *close_btn;
-  GtkWidget *quit_btn;
-  GtkWidget *marked_label;
-  GtkWidget *output_label;
-  GtkWidget *log_btn;
-  GtkWidget *log_popup;
-  GtkWidget *log_btn_top;
-  GtkWidget *shortcuts_btn_top;
+  GtkWidget *menu_bar;
   GtkWidget *status_bar;
-  GtkWidget *shortcuts_btn;
+  GtkWidget *status_bar_box;
+  GSimpleAction *menu_bar_action;
+  GSimpleAction *status_bar_action;
+
+  GtkWidget *log_popup;
   GtkWidget *shortcuts_popup;
   FILE *log_file;
 
-  GSubprocess *subprocess;
-  GCancellable *cancellable;
-  char *cmd_string;
-  gint64 start_time;
   gboolean destroyed;
-  int state;
-  gboolean defaults_applied;
-  GSList *temp_dirs;
 
   RuntimeConfig *config;
-  char *marked_lines_str;
   char *opencode_bin;
 
   guint kb_focus_keyval;
@@ -60,39 +40,29 @@ typedef struct _AppWindow {
   GdkModifierType kb_submit_mods;
   guint kb_cancel_keyval;
   GdkModifierType kb_cancel_mods;
-  gboolean esc_armed;
-  guint esc_reset_timeout;
-
-  GtkWidget *follow_up_check;
-  gboolean follow_up;
-  gboolean follow_up_active;
-  char *last_tmpdir;
-  GList *qa_history;
-  char *last_query;
-  char *last_output;
-  int follow_up_turn;
-
-  int layout_mode;
-  gboolean output_popped;
-  GtkWidget *popout_window;
-  GtkWidget *popout_btn;
-  GtkWidget *prompt_btns;
-  GtkWidget *agent_btns;
-  GtkWidget *content_stack;
-  GtkWidget *layout_paned;
-  GtkWidget *pane_left;
-  GtkWidget *pane_right;
-  GtkWidget *layout_popped;
-  GtkWidget *prompt_section;
-  GtkWidget *fu_row;
-  GtkWidget *agent_row;
-  GtkWidget *output_section;
-  GtkWidget *marked_row;
-  GtkWidget *action_row;
   guint kb_layout_keyval;
   GdkModifierType kb_layout_mods;
   guint kb_popout_keyval;
   GdkModifierType kb_popout_mods;
+  gboolean esc_armed;
+  guint esc_reset_timeout;
+
+  GPtrArray *tabs;
+  int active_tab_idx;
+  GtkWidget *tab_bar;
+
+  guint kb_new_tab_keyval;
+  GdkModifierType kb_new_tab_mods;
+  guint kb_close_tab_keyval;
+  GdkModifierType kb_close_tab_mods;
+  guint kb_restore_tab_keyval;
+  GdkModifierType kb_restore_tab_mods;
+  guint kb_follow_up_toggle_keyval;
+  GdkModifierType kb_follow_up_toggle_mods;
+  guint kb_menu_bar_keyval;
+  GdkModifierType kb_menu_bar_mods;
+  guint kb_status_bar_keyval;
+  GdkModifierType kb_status_bar_mods;
 } AppWindow;
 
 AppWindow *app_window_new(GtkApplication *app);
@@ -101,5 +71,7 @@ void app_window_present(AppWindow *win);
 void app_window_close_and_quit(AppWindow *win);
 void app_window_free(gpointer data);
 void app_window_save_state(AppWindow *win);
+
+Tab *app_window_get_active_tab(AppWindow *win);
 
 #endif

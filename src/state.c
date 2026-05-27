@@ -1,6 +1,10 @@
 #include "state.h"
+#include "config.h"
+#include <gtk/gtk.h>
+#include <stdio.h>
+#include <string.h>
 
-#define STATE_DIR  "promptr"
+#define STATE_DIR  DATA_DIR_SUFFIX
 #define STATE_FILE "state"
 
 #define GROUP      "state"

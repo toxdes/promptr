@@ -4,6 +4,7 @@
 *.a
 /build/
 /promptr
+/promptr-debug
 
 dist/
 

@@ -41,7 +41,7 @@ int main(int argc, char *argv[]) {
     g_autofree char *renderer = NULL;
 
     cfg_dir = g_get_user_config_dir();
-    cfg_path = g_build_filename(cfg_dir, "promptr", "config", NULL);
+    cfg_path = g_build_filename(cfg_dir, DATA_DIR_SUFFIX, "config", NULL);
     if (g_key_file_load_from_file(kf, cfg_path, G_KEY_FILE_NONE, NULL)) {
       renderer = g_key_file_get_string(kf, "preferences", "gsk_renderer", NULL);
     }
@@ -50,9 +50,9 @@ int main(int argc, char *argv[]) {
     g_setenv("GSK_RENDERER", renderer, FALSE);
   }
 
-  g_set_prgname("promptr");
+  g_set_prgname(DATA_DIR_SUFFIX);
   gtk_source_init();
-  app = gtk_application_new("com.toxdes.promptr", G_APPLICATION_DEFAULT_FLAGS);
+  app = gtk_application_new(APP_ID, G_APPLICATION_DEFAULT_FLAGS);
   g_signal_connect(app, "activate", G_CALLBACK(on_activate), NULL);
   g_signal_connect(app, "shutdown", G_CALLBACK(on_shutdown), NULL);
   status = g_application_run(G_APPLICATION(app), argc, argv);
