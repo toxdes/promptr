@@ -2533,7 +2533,7 @@ static void on_shortcuts(AppWindow *win) {
     gtk_window_set_destroy_with_parent(GTK_WINDOW(popup), TRUE);
     gtk_window_set_hide_on_close(GTK_WINDOW(popup), TRUE);
     gtk_window_set_title(GTK_WINDOW(popup), "Keyboard Shortcuts");
-    gtk_window_set_default_size(GTK_WINDOW(popup), 460, 360);
+    gtk_window_set_default_size(GTK_WINDOW(popup), 460, 480);
     gtk_window_set_resizable(GTK_WINDOW(popup), TRUE);
 
     box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
@@ -2608,39 +2608,6 @@ static void on_shortcuts(AppWindow *win) {
         {NULL, "Toggle follow-up"},
         {NULL, "Switch to tab 1-9"},
     };
-    const char *hardcoded_shortcuts[] = {
-        NULL,       NULL, NULL, NULL, NULL, NULL,       NULL,
-        "ESC, ESC", NULL, NULL, NULL, NULL, "alt+1..9",
-    };
-
-    int n_config = 12;
-
-    rows[0].shortcut = accel_to_human(runtime_config_get_string(
-        win->config, "kb_focus_prompt", KB_FOCUS_PROMPT));
-    rows[1].shortcut = accel_to_human(runtime_config_get_string(
-        win->config, "kb_copy_marked", KB_COPY_MARKED));
-    rows[2].shortcut = accel_to_human(
-        runtime_config_get_string(win->config, "kb_close", KB_CLOSE));
-    rows[3].shortcut = accel_to_human(
-        runtime_config_get_string(win->config, "kb_quit", KB_QUIT));
-    rows[4].shortcut = accel_to_human(
-        runtime_config_get_string(win->config, "kb_log", KB_LOG));
-    rows[5].shortcut = accel_to_human(
-        runtime_config_get_string(win->config, "kb_shortcuts", KB_SHORTCUTS));
-    rows[6].shortcut = accel_to_human(
-        runtime_config_get_string(win->config, "kb_submit", KB_SUBMIT));
-    rows[8].shortcut = accel_to_human(
-        runtime_config_get_string(win->config, "kb_new_tab", KB_NEW_TAB));
-    rows[9].shortcut = accel_to_human(
-        runtime_config_get_string(win->config, "kb_close_tab", KB_CLOSE_TAB));
-    rows[10].shortcut = accel_to_human(runtime_config_get_string(
-        win->config, "kb_restore_tab", KB_RESTORE_TAB));
-    rows[11].shortcut = accel_to_human(runtime_config_get_string(
-        win->config, "kb_follow_up_toggle", KB_FOLLOW_UP_TOGGLE));
-
-    for (int i = n_config; i < (int)G_N_ELEMENTS(rows); i++)
-      rows[i].shortcut = hardcoded_shortcuts[i];
-
     for (int i = 0; i < (int)G_N_ELEMENTS(rows); i++) {
       GtkWidget *k, *d;
       const char *row_class;
@@ -2654,7 +2621,7 @@ static void on_shortcuts(AppWindow *win) {
     }
 
     for (int i = 0; i < (int)G_N_ELEMENTS(rows); i++)
-      if (hardcoded_shortcuts[i] == NULL)
+      if (i != 7 && i != 12)
         g_free((char *)rows[i].shortcut);
 
     gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scroll), grid);
