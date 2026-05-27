@@ -26,7 +26,6 @@ static void on_quit(AppWindow *win);
 static void on_follow_up_toggled(Tab *tab);
 static void update_submit_sensitivity(Tab *tab);
 static char *get_trimmed_text(GtkWidget *text_view);
-char *get_selected_text(GtkWidget *dropdown);
 static void set_prompt_focused(Tab *tab);
 
 static void set_loading_state(Tab *tab, const char *cmd);
@@ -658,7 +657,7 @@ GtkWidget *tab_create_label(Tab *tab, int idx, AppWindow *win) {
 
 struct CloseCtx {
   AppWindow *win;
-  int idx;
+  Tab *tab;
 };
 
 static void on_close_label_clicked(GtkGestureClick *gesture, int n_press,
@@ -687,7 +686,7 @@ static void on_close_label_clicked(GtkGestureClick *gesture, int n_press,
 
         ctx = g_new(struct CloseCtx, 1);
         ctx->win = win;
-        ctx->idx = (int)i;
+        ctx->tab = tab_ref(tab);
         dlg = gtk_alert_dialog_new("Close tab?");
         gtk_alert_dialog_set_detail(dlg, "Close this tab?");
         gtk_alert_dialog_set_buttons(dlg, buttons);
@@ -707,8 +706,17 @@ static void on_close_confirm_cb(GObject *source, GAsyncResult *result,
   int response;
 
   response = gtk_alert_dialog_choose_finish(dlg, result, NULL);
-  if (response == 1)
-    close_tab(ctx->win, ctx->idx);
+  if (response == 1) {
+    guint i;
+
+    for (i = 0; i < ctx->win->tabs->len; i++) {
+      if (g_ptr_array_index(ctx->win->tabs, i) == ctx->tab) {
+        close_tab(ctx->win, (int)i);
+        break;
+      }
+    }
+  }
+  tab_unref(ctx->tab);
   g_object_unref(dlg);
   g_free(ctx);
 }
@@ -781,7 +789,6 @@ static void on_tab_rename_activate(GtkEntry *entry, AppWindow *win) {
       g_free(tab->name);
       tab->name = g_strdup(new_name);
       tab->has_activity = TRUE;
-      tab_auto_rename(tab);
     }
 
     tab->rename_entry = NULL;
@@ -872,20 +879,24 @@ static void on_notebook_page_switched(GtkNotebook *notebook, GtkWidget *page,
     nb = GTK_NOTEBOOK(win->tab_bar);
     old_idx = win->active_tab_idx;
     if (old_idx >= 0 && (guint)old_idx < win->tabs->len) {
-      GtkWidget *old_label_box;
+      GtkWidget *op;
 
-      old_label_box = gtk_notebook_get_tab_label(
-          nb, gtk_notebook_get_nth_page(nb, old_idx));
-      if (old_label_box != NULL) {
-        GtkWidget *child;
+      op = gtk_notebook_get_nth_page(nb, old_idx);
+      if (op != NULL && GTK_IS_WIDGET(op)) {
+        GtkWidget *old_label_box;
 
-        child = gtk_widget_get_first_child(old_label_box);
-        while (child != NULL) {
-          if (GTK_IS_ENTRY(child)) {
-            on_tab_rename_cancel(GTK_ENTRY(child), win);
-            break;
+        old_label_box = gtk_notebook_get_tab_label(nb, op);
+        if (old_label_box != NULL) {
+          GtkWidget *child;
+
+          child = gtk_widget_get_first_child(old_label_box);
+          while (child != NULL) {
+            if (GTK_IS_ENTRY(child)) {
+              on_tab_rename_cancel(GTK_ENTRY(child), win);
+              break;
+            }
+            child = gtk_widget_get_next_sibling(child);
           }
-          child = gtk_widget_get_next_sibling(child);
         }
       }
     }
@@ -893,35 +904,50 @@ static void on_notebook_page_switched(GtkNotebook *notebook, GtkWidget *page,
 
   {
     int old_idx;
-    GtkWidget *old_label, *new_label;
     GtkNotebook *nb;
 
     nb = GTK_NOTEBOOK(win->tab_bar);
     old_idx = win->active_tab_idx;
     if (old_idx >= 0 && (guint)old_idx < win->tabs->len) {
-      old_label = gtk_notebook_get_tab_label(
-          nb, gtk_notebook_get_nth_page(nb, old_idx));
-      if (old_label != NULL)
-        gtk_widget_set_size_request(old_label, 90, -1);
+      GtkWidget *op;
+
+      op = gtk_notebook_get_nth_page(nb, old_idx);
+      if (op != NULL && GTK_IS_WIDGET(op)) {
+        GtkWidget *old_label;
+
+        old_label = gtk_notebook_get_tab_label(nb, op);
+        if (old_label != NULL)
+          gtk_widget_set_size_request(old_label, 90, -1);
+      }
     }
-    new_label = gtk_notebook_get_tab_label(
-        nb, gtk_notebook_get_nth_page(nb, (int)page_num));
-    if (new_label != NULL)
-      gtk_widget_set_size_request(new_label, 140, -1);
+    {
+      GtkWidget *np;
+
+      np = gtk_notebook_get_nth_page(nb, (int)page_num);
+      if (np != NULL && GTK_IS_WIDGET(np)) {
+        GtkWidget *new_label;
+
+        new_label = gtk_notebook_get_tab_label(nb, np);
+        if (new_label != NULL)
+          gtk_widget_set_size_request(new_label, 140, -1);
+      }
+    }
   }
 
   win->active_tab_idx = (int)page_num;
   disarm_escape(win);
 
-  {
+  if (page_num < win->tabs->len) {
     Tab *tab;
 
     tab = g_ptr_array_index(win->tabs, page_num);
-    tab->has_unseen_output = FALSE;
-    tab_update_status_dot(tab);
-    apply_layout(tab);
-    set_prompt_focused(tab);
-    gtk_window_set_title(GTK_WINDOW(win->window), tab->name);
+    if (tab != NULL) {
+      tab->has_unseen_output = FALSE;
+      tab_update_status_dot(tab);
+      apply_layout(tab);
+      set_prompt_focused(tab);
+      gtk_window_set_title(GTK_WINDOW(win->window), tab->name);
+    }
   }
 }
 
@@ -1004,7 +1030,7 @@ static GdkContentProvider *on_tab_drag_prepare(GtkDragSource *source, double x,
                                                double y, AppWindow *win) {
   GtkWidget *label_box;
   int idx;
-  char *value;
+  Tab *tab;
 
   (void)win;
   (void)x;
@@ -1012,8 +1038,10 @@ static GdkContentProvider *on_tab_drag_prepare(GtkDragSource *source, double x,
 
   label_box = gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(source));
   idx = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(label_box), "tab-idx"));
-  value = g_strdup_printf("%d", idx);
-  return gdk_content_provider_new_typed(G_TYPE_STRING, value);
+  if (idx < 0 || (guint)idx >= win->tabs->len)
+    return NULL;
+  tab = g_ptr_array_index(win->tabs, idx);
+  return gdk_content_provider_new_typed(G_TYPE_STRING, tab->id);
 }
 
 static GdkDragAction on_tab_drop_motion(GtkDropTarget *drop, double x, double y,
@@ -1062,7 +1090,21 @@ static gboolean on_tab_drop(GtkDropTarget *drop, const GValue *value, double x,
   (void)y;
 
   tab_drop_indicator(win, -1);
-  src_idx = atoi(g_value_get_string(value));
+  src_idx = -1;
+  {
+    const char *uuid = g_value_get_string(value);
+
+    for (i = 0; i < win->tabs->len; i++) {
+      Tab *t = g_ptr_array_index(win->tabs, i);
+
+      if (g_strcmp0(t->id, uuid) == 0) {
+        src_idx = (int)i;
+        break;
+      }
+    }
+  }
+  if (src_idx < 0)
+    return TRUE;
 
   nb = GTK_NOTEBOOK(win->tab_bar);
   n_pages = gtk_notebook_get_n_pages(nb);
@@ -1125,7 +1167,6 @@ static gboolean on_tab_drop(GtkDropTarget *drop, const GValue *value, double x,
 
 static void on_tab_drop_leave(GtkDropTarget *drop, AppWindow *win) {
   (void)drop;
-  (void)win;
   tab_drop_indicator(win, -1);
 }
 
@@ -1182,7 +1223,7 @@ static void on_restore_tab(AppWindow *win) {
       if (is_open || !has_activity)
         continue;
 
-      uuid = g_strndup(name, strlen(name) - 5);
+      uuid = g_strndup(name, strlen(name) - strlen(".conf"));
       time_str = g_key_file_get_string(kf, "tab", "time", NULL);
 
       if (best_time == NULL ||
@@ -1547,19 +1588,19 @@ AppWindow *app_window_new(GtkApplication *app) {
     g_autofree char *log_path = NULL;
     char timestr[64];
     time_t now;
-    struct tm *tm;
+    struct tm tm;
 
     data_dir = g_get_user_data_dir();
     log_dir = g_build_filename(data_dir, DATA_DIR_SUFFIX, "logs", NULL);
     g_mkdir_with_parents(log_dir, 0700);
 
     now = time(NULL);
-    tm = localtime(&now);
-    strftime(timestr, sizeof(timestr), "promptr-%Y%m%dT%H%M%S.log", tm);
+    localtime_r(&now, &tm);
+    strftime(timestr, sizeof(timestr), "promptr-%Y%m%dT%H%M%S.log", &tm);
     log_path = g_build_filename(log_dir, timestr, NULL);
     win->log_file = fopen(log_path, "w");
     if (win->log_file != NULL) {
-      strftime(timestr, sizeof(timestr), "%Y-%m-%d %H:%M:%S", tm);
+      strftime(timestr, sizeof(timestr), "%Y-%m-%d %H:%M:%S", &tm);
       fprintf(win->log_file, "Promptr v" VERSION ": session %s\n", timestr);
       fflush(win->log_file);
     }
@@ -1796,7 +1837,7 @@ AppWindow *app_window_new(GtkApplication *app) {
           if (!is_open)
             continue;
 
-          uuid = g_strndup(name, strlen(name) - 5);
+          uuid = g_strndup(name, strlen(name) - strlen(".conf"));
           {
             Tab *t;
 
@@ -1808,6 +1849,9 @@ AppWindow *app_window_new(GtkApplication *app) {
       }
       g_dir_close(gdir);
     }
+
+    if (loaded > 0)
+      log_append(win, "session -> loaded %d persisted tabs", loaded);
 
     /* always add a fresh tab on top */
     tab = add_new_tab(win);
@@ -1889,7 +1933,7 @@ void app_window_close_and_quit(AppWindow *win) {
             if (!is_open) {
               g_autofree char *uuid = NULL;
 
-              uuid = g_strndup(name, strlen(name) - 5);
+              uuid = g_strndup(name, strlen(name) - strlen(".conf"));
               tab_delete_saved(uuid);
               {
                 g_autofree char *tmp_path = NULL;
@@ -1955,7 +1999,7 @@ static void set_load_state_common(Tab *tab) {
   gtk_widget_set_visible(tab->spinner, TRUE);
 }
 
-static void set_load_state_uncommon(Tab *tab) {
+static void set_load_state_idle(Tab *tab) {
   gtk_widget_set_sensitive(tab->prompt_view, TRUE);
   gtk_widget_set_sensitive(tab->agent_dropdown, TRUE);
   gtk_widget_set_sensitive(tab->model_dropdown, TRUE);
@@ -1991,7 +2035,7 @@ static void set_finished_state(Tab *tab, char *cmd, gint64 elapsed,
   int lines;
 
   disarm_escape(win);
-  set_load_state_uncommon(tab);
+  set_load_state_idle(tab);
   tab->state = STATE_FINISHED;
 
   if (app_window_get_active_tab(win) != tab)
@@ -2053,7 +2097,7 @@ static void set_canceled_state(Tab *tab, char *cmd) {
   AppWindow *win = tab->win;
 
   disarm_escape(win);
-  set_load_state_uncommon(tab);
+  set_load_state_idle(tab);
   tab->state = STATE_CANCELED;
 
   tab_update_status_dot(tab);
@@ -2077,7 +2121,7 @@ static void set_errored_state(Tab *tab, char *cmd, const char *stderr_output) {
   g_autofree char *err_summary = NULL;
 
   disarm_escape(win);
-  set_load_state_uncommon(tab);
+  set_load_state_idle(tab);
   tab->state = STATE_FINISHED;
 
   if (app_window_get_active_tab(win) != tab)
@@ -2204,10 +2248,8 @@ static void on_submit(AppWindow *win) {
   command_execute(tab, model, agent, query, tmpdir, win->opencode_bin,
                   is_follow_up, command_finished_cb);
 
-  if (tab->subprocess != NULL && tmpdir != NULL && !is_follow_up)
-
-    if (tab->subprocess != NULL)
-      set_loading_state(tab, cmd_display);
+  if (tab->subprocess != NULL)
+    set_loading_state(tab, cmd_display);
 
   g_free(query);
   g_free(agent);
@@ -2347,8 +2389,17 @@ static void on_copy(AppWindow *win) {
 /* ── close / quit ──────────────────────────────────────────────── */
 
 static void on_close(AppWindow *win) {
-  Tab *tab = app_window_get_active_tab(win);
+  guint i;
+  Tab *tab;
 
+  for (i = 0; i < win->tabs->len; i++) {
+    Tab *t = g_ptr_array_index(win->tabs, i);
+
+    if (t != NULL && t->has_activity)
+      tab_save(t);
+  }
+
+  tab = app_window_get_active_tab(win);
   if (tab != NULL && tab->subprocess != NULL)
     command_cancel(tab);
   gtk_widget_set_visible(win->window, FALSE);
@@ -2360,9 +2411,17 @@ static void on_quit(AppWindow *win) {
 
 static gboolean on_close_request(GtkWindow *window, gpointer user_data) {
   AppWindow *win = user_data;
+  guint i;
   Tab *tab;
 
   (void)window;
+
+  for (i = 0; i < win->tabs->len; i++) {
+    Tab *t = g_ptr_array_index(win->tabs, i);
+
+    if (t != NULL && t->has_activity)
+      tab_save(t);
+  }
 
   tab = app_window_get_active_tab(win);
   if (tab != NULL && tab->subprocess != NULL)
@@ -2387,7 +2446,7 @@ static void on_log(AppWindow *win) {
     GtkTextIter end;
     char timestr[64];
     time_t now;
-    struct tm *tm;
+    struct tm tm;
 
     popup = gtk_window_new();
     gtk_window_set_transient_for(GTK_WINDOW(popup), GTK_WINDOW(win->window));
@@ -2413,8 +2472,8 @@ static void on_log(AppWindow *win) {
     gtk_box_append(GTK_BOX(box), scroll);
 
     now = time(NULL);
-    tm = localtime(&now);
-    strftime(timestr, sizeof(timestr), "%Y-%m-%d %H:%M:%S", tm);
+    localtime_r(&now, &tm);
+    strftime(timestr, sizeof(timestr), "%Y-%m-%d %H:%M:%S", &tm);
     buf = gtk_text_view_get_buffer(GTK_TEXT_VIEW(win->cmd_label));
     gtk_text_buffer_get_end_iter(buf, &end);
     {
@@ -2535,16 +2594,26 @@ static void on_shortcuts(AppWindow *win) {
       const char *shortcut;
       const char *desc;
     } rows[] = {
-        {NULL, "Focus prompt input"}, {NULL, "Copy marked lines"},
-        {NULL, "Close window"},       {NULL, "Close & quit"},
-        {NULL, "Open session log"},   {NULL, "Open this shortcuts window"},
-        {NULL, "Submit prompt"},      {NULL, "Cancel"},
+        {NULL, "Focus prompt input"},
+        {NULL, "Copy marked lines"},
+        {NULL, "Close window"},
+        {NULL, "Close & quit"},
+        {NULL, "Open session log"},
+        {NULL, "Open this shortcuts window"},
+        {NULL, "Submit prompt"},
+        {NULL, "Cancel"},
+        {NULL, "New tab"},
+        {NULL, "Close tab"},
+        {NULL, "Restore closed tab"},
+        {NULL, "Toggle follow-up"},
+        {NULL, "Switch to tab 1-9"},
     };
     const char *hardcoded_shortcuts[] = {
-        NULL, NULL, NULL, NULL, NULL, NULL, NULL, "ESC, ESC",
+        NULL,       NULL, NULL, NULL, NULL, NULL,       NULL,
+        "ESC, ESC", NULL, NULL, NULL, NULL, "alt+1..9",
     };
 
-    int n_config = 7;
+    int n_config = 12;
 
     rows[0].shortcut = accel_to_human(runtime_config_get_string(
         win->config, "kb_focus_prompt", KB_FOCUS_PROMPT));
@@ -2560,6 +2629,14 @@ static void on_shortcuts(AppWindow *win) {
         runtime_config_get_string(win->config, "kb_shortcuts", KB_SHORTCUTS));
     rows[6].shortcut = accel_to_human(
         runtime_config_get_string(win->config, "kb_submit", KB_SUBMIT));
+    rows[8].shortcut = accel_to_human(
+        runtime_config_get_string(win->config, "kb_new_tab", KB_NEW_TAB));
+    rows[9].shortcut = accel_to_human(
+        runtime_config_get_string(win->config, "kb_close_tab", KB_CLOSE_TAB));
+    rows[10].shortcut = accel_to_human(runtime_config_get_string(
+        win->config, "kb_restore_tab", KB_RESTORE_TAB));
+    rows[11].shortcut = accel_to_human(runtime_config_get_string(
+        win->config, "kb_follow_up_toggle", KB_FOLLOW_UP_TOGGLE));
 
     for (int i = n_config; i < (int)G_N_ELEMENTS(rows); i++)
       rows[i].shortcut = hardcoded_shortcuts[i];
@@ -2866,49 +2943,6 @@ static char *get_trimmed_text(GtkWidget *text_view) {
   return result;
 }
 
-char *get_selected_text(GtkWidget *dropdown) {
-  guint pos;
-  GListModel *model;
-  GObject *item;
-  const char *str;
-
-  pos = gtk_drop_down_get_selected(GTK_DROP_DOWN(dropdown));
-  if (pos == GTK_INVALID_LIST_POSITION)
-    return g_strdup("None");
-
-  model = gtk_drop_down_get_model(GTK_DROP_DOWN(dropdown));
-  item = g_list_model_get_item(model, pos);
-  if (item == NULL)
-    return g_strdup("None");
-
-  str = gtk_string_object_get_string(GTK_STRING_OBJECT(item));
-  char *result = g_strdup(str != NULL ? str : "None");
-  g_object_unref(item);
-  return result;
-}
-
-void set_selected_text(GtkWidget *dropdown, const char *text) {
-  guint i;
-  GListModel *model;
-  guint n;
-
-  model = gtk_drop_down_get_model(GTK_DROP_DOWN(dropdown));
-  n = g_list_model_get_n_items(model);
-  for (i = 0; i < n; i++) {
-    GObject *item;
-    const char *str;
-
-    item = g_list_model_get_item(model, i);
-    str = gtk_string_object_get_string(GTK_STRING_OBJECT(item));
-    if (g_strcmp0(str, text) == 0) {
-      gtk_drop_down_set_selected(GTK_DROP_DOWN(dropdown), i);
-      g_object_unref(item);
-      return;
-    }
-    g_object_unref(item);
-  }
-}
-
 static char *accel_to_human(const char *accel) {
   GString *out;
   const char *p;
@@ -3067,13 +3101,13 @@ static void log_append(AppWindow *win, const char *fmt, ...) {
   GString *line;
   char timestr[64];
   time_t now;
-  struct tm *tm;
+  struct tm tm;
   va_list args;
   g_autofree char *msg = NULL;
 
   now = time(NULL);
-  tm = localtime(&now);
-  strftime(timestr, sizeof(timestr), "[%H:%M:%S] ", tm);
+  localtime_r(&now, &tm);
+  strftime(timestr, sizeof(timestr), "[%H:%M:%S] ", &tm);
 
   va_start(args, fmt);
   msg = g_strdup_vprintf(fmt, args);

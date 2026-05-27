@@ -57,9 +57,6 @@ typedef struct _AppWindow {
   GdkModifierType kb_restore_tab_mods;
   guint kb_follow_up_toggle_keyval;
   GdkModifierType kb_follow_up_toggle_mods;
-
-  int tab_position;
-  gboolean tab_confirm_before_close;
 } AppWindow;
 
 AppWindow *app_window_new(GtkApplication *app);

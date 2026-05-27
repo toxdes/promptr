@@ -81,15 +81,16 @@ void tab_unref(Tab *tab) {
 void remove_dir(const char *path) {
   GDir *dir;
   const char *name;
-  g_autofree char *fpath = NULL;
 
   dir = g_dir_open(path, 0, NULL);
   if (dir != NULL) {
     while ((name = g_dir_read_name(dir)) != NULL) {
-      fpath = g_build_filename(path, name, NULL);
-      unlink(fpath);
-      g_free(fpath);
-      fpath = NULL;
+      g_autofree char *fpath = g_build_filename(path, name, NULL);
+
+      if (g_file_test(fpath, G_FILE_TEST_IS_DIR))
+        remove_dir(fpath);
+      else
+        unlink(fpath);
     }
     g_dir_close(dir);
   }
@@ -106,7 +107,7 @@ void tab_save(Tab *tab) {
   int turn;
   char timestr[64];
   time_t now;
-  struct tm *tm;
+  struct tm tm;
 
   if (tab == NULL || tab->id == NULL)
     return;
@@ -120,6 +121,7 @@ void tab_save(Tab *tab) {
   g_key_file_set_integer(kf, "tab", "layout", tab->layout_mode);
   g_key_file_set_boolean(kf, "tab", "is_open", tab->is_open);
   g_key_file_set_boolean(kf, "tab", "has_activity", tab->has_activity);
+  g_key_file_set_boolean(kf, "tab", "follow_up", tab->follow_up);
 
   {
     const char *agent, *model;
@@ -135,8 +137,8 @@ void tab_save(Tab *tab) {
   }
 
   now = time(NULL);
-  tm = localtime(&now);
-  strftime(timestr, sizeof(timestr), "%Y-%m-%dT%H:%M:%SZ", tm);
+  localtime_r(&now, &tm);
+  strftime(timestr, sizeof(timestr), "%Y-%m-%dT%H:%M:%SZ", &tm);
   g_key_file_set_string(kf, "tab", "time", timestr);
 
   g_key_file_set_string(kf, "follow_up", "last_query",
@@ -186,6 +188,25 @@ void tab_save(Tab *tab) {
       g_file_set_contents(txt_path, text, -1, NULL);
     else
       unlink(txt_path);
+  }
+
+  {
+    g_autofree char *prompt_path = NULL;
+    g_autofree char *prompt_text = NULL;
+
+    prompt_path = g_strdup_printf("%s/%s.prompt", dir, tab->id);
+    if (tab->prompt_view != NULL && GTK_IS_TEXT_VIEW(tab->prompt_view)) {
+      GtkTextBuffer *buf;
+      GtkTextIter start, end;
+
+      buf = gtk_text_view_get_buffer(GTK_TEXT_VIEW(tab->prompt_view));
+      gtk_text_buffer_get_bounds(buf, &start, &end);
+      prompt_text = gtk_text_buffer_get_text(buf, &start, &end, FALSE);
+    }
+    if (prompt_text != NULL && prompt_text[0] != '\0')
+      g_file_set_contents(prompt_path, prompt_text, -1, NULL);
+    else
+      unlink(prompt_path);
   }
 }
 
@@ -240,8 +261,8 @@ Tab *tab_load(AppWindow *win, const char *uuid) {
   agent = g_key_file_get_string(kf, "tab", "agent", NULL);
   model = g_key_file_get_string(kf, "tab", "model", NULL);
 
-  g_ptr_array_add(win->tabs, tab);
   page = tab_create_widgets(tab, win);
+  g_ptr_array_add(win->tabs, tab);
   label_widget = tab_create_label(tab, win->tabs->len - 1, win);
 
   gtk_notebook_append_page(GTK_NOTEBOOK(win->tab_bar), page, label_widget);
@@ -290,12 +311,29 @@ Tab *tab_load(AppWindow *win, const char *uuid) {
     }
   }
 
-  tab->follow_up = FALSE;
+  tab->follow_up = g_key_file_get_boolean(kf, "tab", "follow_up", NULL);
   tab->follow_up_active = FALSE;
   tab->defaults_applied = TRUE;
 
-  if (g_file_test(tab->tmpdir_path, G_FILE_TEST_IS_DIR))
+  if (g_file_test(tab->tmpdir_path, G_FILE_TEST_IS_DIR)) {
     gtk_widget_set_sensitive(tab->follow_up_check, TRUE);
+    if (tab->follow_up)
+      gtk_check_button_set_active(GTK_CHECK_BUTTON(tab->follow_up_check), TRUE);
+  }
+
+  {
+    g_autofree char *prompt_path = NULL;
+    g_autofree char *prompt_text = NULL;
+
+    prompt_path = g_strdup_printf("%s/%s.prompt", dir, tab->id);
+    if (g_file_get_contents(prompt_path, &prompt_text, NULL, NULL) &&
+        prompt_text != NULL && prompt_text[0] != '\0') {
+      GtkTextBuffer *buf;
+
+      buf = gtk_text_view_get_buffer(GTK_TEXT_VIEW(tab->prompt_view));
+      gtk_text_buffer_set_text(buf, prompt_text, -1);
+    }
+  }
 
   return tab;
 }
@@ -304,12 +342,15 @@ void tab_delete_saved(const char *uuid) {
   g_autofree char *dir = NULL;
   g_autofree char *conf_path = NULL;
   g_autofree char *txt_path = NULL;
+  g_autofree char *prompt_path = NULL;
 
   dir = tabs_dir();
   conf_path = g_strdup_printf("%s/%s.conf", dir, uuid);
   txt_path = g_strdup_printf("%s/%s.txt", dir, uuid);
+  prompt_path = g_strdup_printf("%s/%s.prompt", dir, uuid);
   unlink(conf_path);
   unlink(txt_path);
+  unlink(prompt_path);
 }
 
 void tab_auto_rename(Tab *tab) {
@@ -323,13 +364,46 @@ void tab_auto_rename(Tab *tab) {
     return;
 
   {
-    g_autofree char *prefix = g_strndup(tab->id, 8);
-    g_autofree char *newname = NULL;
+    g_autofree char *text = NULL;
+    g_autoptr(GString) clean = NULL;
 
-    newname = g_strdup_printf("New Tab %s", prefix);
-    g_free(tab->name);
-    tab->name = newname;
-    newname = NULL;
+    if (tab->prompt_view != NULL && GTK_IS_TEXT_VIEW(tab->prompt_view)) {
+      GtkTextBuffer *buf;
+      GtkTextIter start, end_iter;
+
+      buf = gtk_text_view_get_buffer(GTK_TEXT_VIEW(tab->prompt_view));
+      gtk_text_buffer_get_bounds(buf, &start, &end_iter);
+      text = gtk_text_buffer_get_text(buf, &start, &end_iter, FALSE);
+    }
+
+    if (text != NULL) {
+      const char *p;
+      gboolean non_space;
+
+      clean = g_string_new(NULL);
+      non_space = FALSE;
+      for (p = text; *p != '\0' && *p != '\n' && clean->len < 200;
+           p = g_utf8_next_char(p)) {
+        gunichar uc;
+
+        uc = g_utf8_get_char(p);
+        if (g_unichar_iscntrl(uc))
+          continue;
+        if (!non_space && g_unichar_isspace(uc))
+          continue;
+        non_space = TRUE;
+        g_string_append_unichar(clean, uc);
+      }
+
+      while (clean->len > 0 && g_ascii_isspace(clean->str[clean->len - 1]))
+        g_string_truncate(clean, clean->len - 1);
+
+      if (clean->len > 0) {
+        g_free(tab->name);
+        tab->name = g_string_free(clean, FALSE);
+        clean = NULL;
+      }
+    }
   }
 
   nb = GTK_NOTEBOOK(tab->win->tab_bar);
@@ -365,5 +439,50 @@ void tab_auto_rename(Tab *tab) {
 Tab *app_window_get_active_tab(AppWindow *win) {
   if (win->tabs == NULL || win->tabs->len == 0)
     return NULL;
+  if (win->active_tab_idx < 0 || win->active_tab_idx >= (int)win->tabs->len)
+    return NULL;
   return g_ptr_array_index(win->tabs, win->active_tab_idx);
+}
+
+char *get_selected_text(GtkWidget *dropdown) {
+  guint pos;
+  GListModel *model;
+  GObject *item;
+  const char *str;
+
+  pos = gtk_drop_down_get_selected(GTK_DROP_DOWN(dropdown));
+  if (pos == GTK_INVALID_LIST_POSITION)
+    return g_strdup("None");
+
+  model = gtk_drop_down_get_model(GTK_DROP_DOWN(dropdown));
+  item = g_list_model_get_item(model, pos);
+  if (item == NULL)
+    return g_strdup("None");
+
+  str = gtk_string_object_get_string(GTK_STRING_OBJECT(item));
+  char *result = g_strdup(str != NULL ? str : "None");
+  g_object_unref(item);
+  return result;
+}
+
+void set_selected_text(GtkWidget *dropdown, const char *text) {
+  guint i;
+  GListModel *model;
+  guint n;
+
+  model = gtk_drop_down_get_model(GTK_DROP_DOWN(dropdown));
+  n = g_list_model_get_n_items(model);
+  for (i = 0; i < n; i++) {
+    GObject *item;
+    const char *str;
+
+    item = g_list_model_get_item(model, i);
+    str = gtk_string_object_get_string(GTK_STRING_OBJECT(item));
+    if (g_strcmp0(str, text) == 0) {
+      gtk_drop_down_set_selected(GTK_DROP_DOWN(dropdown), i);
+      g_object_unref(item);
+      return;
+    }
+    g_object_unref(item);
+  }
 }

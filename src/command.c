@@ -142,9 +142,13 @@ static void communicate_cb(GObject *source, GAsyncResult *result,
     if (g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
       if (callback != NULL)
         callback(tab, stdout_str, stderr_str, elapsed, exit_code, FALSE);
+      tab_unref(tab);
+      return;
     } else if (g_subprocess_get_if_signaled(proc)) {
       if (callback != NULL)
         callback(tab, stdout_str, stderr_str, elapsed, exit_code, FALSE);
+      tab_unref(tab);
+      return;
     } else {
       const char *msg;
       char *full;
@@ -154,8 +158,9 @@ static void communicate_cb(GObject *source, GAsyncResult *result,
       if (callback != NULL)
         callback(tab, full, stderr_str, elapsed, exit_code, TRUE);
       g_free(full);
+      tab_unref(tab);
+      return;
     }
-    return;
   }
 
   if (callback != NULL)
