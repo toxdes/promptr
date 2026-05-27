@@ -79,6 +79,12 @@ static const ConfigDefault CONFIG_DEFAULTS[] = {
      "# Show confirmation dialog before closing active tabs (0 or 1)"},
     {"tab_show_add_button", G_STRINGIFY(TAB_SHOW_ADD_BUTTON_DEFAULT),
      "# Show the + (add new tab) button (0 or 1)"},
+    {"kb_menu_bar", KB_MENU_BAR, "# Toggle menu bar visibility"},
+    {"menu_bar_visible", G_STRINGIFY(MENU_BAR_VISIBLE_DEFAULT),
+     "# Show menu bar at startup (0 or 1)"},
+    {"kb_status_bar", KB_STATUS_BAR, "# Toggle status bar visibility"},
+    {"status_bar_visible", G_STRINGIFY(STATUS_BAR_VISIBLE_DEFAULT),
+     "# Show status bar at startup (0 or 1)"},
     {NULL, NULL, NULL}};
 
 static void migrate_config(const char *path, GKeyFile *kf) {

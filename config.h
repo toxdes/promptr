@@ -40,6 +40,14 @@
 #define TAB_CONFIRM_BEFORE_CLOSE_DEFAULT 0
 #define TAB_SHOW_ADD_BUTTON_DEFAULT      1
 
+/* Menu bar */
+#define KB_MENU_BAR                      "<Control>m"
+#define MENU_BAR_VISIBLE_DEFAULT         1
+
+/* Status bar */
+#define KB_STATUS_BAR                    "<Control>j"
+#define STATUS_BAR_VISIBLE_DEFAULT       1
+
 /* Layer-shell overlay on wlroots compositors (0 or 1) */
 #define LAYER_SHELL_ENABLED              0
 

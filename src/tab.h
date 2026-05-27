@@ -26,8 +26,6 @@ typedef struct {
   GtkWidget *output_scroll;
   GtkWidget *output_view;
   GtkWidget *copy_btn;
-  GtkWidget *close_btn;
-  GtkWidget *quit_btn;
   GtkWidget *marked_label;
   GtkWidget *output_label;
   GtkWidget *follow_up_check;
@@ -49,10 +47,6 @@ typedef struct {
   GtkWidget *output_section;
   GtkWidget *marked_row;
   GtkWidget *action_row;
-  GtkWidget *log_btn;
-  GtkWidget *log_btn_top;
-  GtkWidget *shortcuts_btn;
-  GtkWidget *shortcuts_btn_top;
 
   GList *qa_history;
   char *last_query;

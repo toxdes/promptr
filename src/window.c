@@ -57,6 +57,20 @@ static void on_log(AppWindow *win);
 static void on_log_close(AppWindow *win);
 static void on_shortcuts(AppWindow *win);
 static void on_shortcuts_close(AppWindow *win);
+static void on_about(AppWindow *win);
+
+static void on_menu_toggle_bar(GSimpleAction *action, GVariant *state,
+                               gpointer user_data);
+static void on_menu_close_tab(GSimpleAction *action, GVariant *param,
+                              gpointer user_data);
+static void on_menu_toggle_follow_up(GSimpleAction *action, GVariant *param,
+                                     gpointer user_data);
+static void on_menu_toggle_layout(GSimpleAction *action, GVariant *param,
+                                  gpointer user_data);
+static void on_menu_popout(GSimpleAction *action, GVariant *param,
+                           gpointer user_data);
+static void on_menu_toggle_status_bar(GSimpleAction *action, GVariant *state,
+                                      gpointer user_data);
 
 /* Fwd: layout helpers */
 static GtkWidget *create_prompt_section(Tab *tab, AppWindow *win);
@@ -149,16 +163,6 @@ static GtkWidget *create_prompt_section(Tab *tab, AppWindow *win) {
     btns = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
     gtk_widget_set_halign(btns, GTK_ALIGN_END);
     gtk_widget_set_valign(btns, GTK_ALIGN_CENTER);
-
-    tab->log_btn_top = gtk_button_new_with_label("Log...");
-    g_signal_connect_swapped(tab->log_btn_top, "clicked", G_CALLBACK(on_log),
-                             win);
-    gtk_box_append(GTK_BOX(btns), tab->log_btn_top);
-
-    tab->shortcuts_btn_top = gtk_button_new_with_label("Shortcuts...");
-    g_signal_connect_swapped(tab->shortcuts_btn_top, "clicked",
-                             G_CALLBACK(on_shortcuts), win);
-    gtk_box_append(GTK_BOX(btns), tab->shortcuts_btn_top);
 
     gtk_box_append(GTK_BOX(hdr), btns);
     tab->prompt_btns = btns;
@@ -333,17 +337,6 @@ static GtkWidget *create_agent_row(Tab *tab, AppWindow *win) {
 
     btns = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
 
-    tab->log_btn = gtk_button_new_with_label("Log...");
-    gtk_widget_set_valign(tab->log_btn, GTK_ALIGN_CENTER);
-    g_signal_connect_swapped(tab->log_btn, "clicked", G_CALLBACK(on_log), win);
-    gtk_box_append(GTK_BOX(btns), tab->log_btn);
-
-    tab->shortcuts_btn = gtk_button_new_with_label("Shortcuts...");
-    gtk_widget_set_valign(tab->shortcuts_btn, GTK_ALIGN_CENTER);
-    g_signal_connect_swapped(tab->shortcuts_btn, "clicked",
-                             G_CALLBACK(on_shortcuts), win);
-    gtk_box_append(GTK_BOX(btns), tab->shortcuts_btn);
-
     gtk_box_append(GTK_BOX(row), btns);
     tab->agent_btns = btns;
   }
@@ -455,6 +448,8 @@ static GtkWidget *create_marked_row(Tab *tab, AppWindow *win) {
 static GtkWidget *create_action_row(Tab *tab, AppWindow *win) {
   GtkWidget *row;
 
+  (void)win;
+
   row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
   gtk_widget_set_margin_top(row, 4);
   gtk_widget_set_margin_bottom(row, 4);
@@ -464,17 +459,6 @@ static GtkWidget *create_action_row(Tab *tab, AppWindow *win) {
   gtk_widget_set_sensitive(tab->copy_btn, FALSE);
   g_signal_connect_swapped(tab->copy_btn, "clicked", G_CALLBACK(on_copy), win);
   gtk_box_append(GTK_BOX(row), tab->copy_btn);
-
-  tab->close_btn = gtk_button_new_with_label("Close");
-  gtk_widget_set_margin_start(tab->close_btn, 12);
-  g_signal_connect_swapped(tab->close_btn, "clicked", G_CALLBACK(on_close),
-                           win);
-  gtk_box_append(GTK_BOX(row), tab->close_btn);
-
-  tab->quit_btn = gtk_button_new_with_label("Close & Quit");
-  gtk_widget_add_css_class(tab->quit_btn, "destructive-action");
-  g_signal_connect_swapped(tab->quit_btn, "clicked", G_CALLBACK(on_quit), win);
-  gtk_box_append(GTK_BOX(row), tab->quit_btn);
 
   return row;
 }
@@ -1332,63 +1316,7 @@ static void setup_tooltips(Tab *tab, AppWindow *win) {
   char *tip;
 
   tip = g_strdup_printf("Copy Marked Lines: %s", t_copy);
-  gtk_widget_set_tooltip_text(tab->copy_btn, tip);
-  g_free(tip);
-  tip = g_strdup_printf("Close: %s", t_close);
-  gtk_widget_set_tooltip_text(tab->close_btn, tip);
-  g_free(tip);
-  tip = g_strdup_printf("Close & Quit: %s", t_quit);
-  gtk_widget_set_tooltip_text(tab->quit_btn, tip);
-  g_free(tip);
-  tip = g_strdup_printf("Log: %s", t_log);
-  gtk_widget_set_tooltip_text(tab->log_btn, tip);
-  g_free(tip);
-  tip = g_strdup_printf("Shortcuts: %s", t_shortcuts);
-  gtk_widget_set_tooltip_text(tab->shortcuts_btn, tip);
-  g_free(tip);
-
-  tip = g_strdup_printf("Log: %s", t_log);
-  gtk_widget_set_tooltip_text(tab->log_btn_top, tip);
-  g_free(tip);
-  tip = g_strdup_printf("Shortcuts: %s", t_shortcuts);
-  gtk_widget_set_tooltip_text(tab->shortcuts_btn_top, tip);
-  g_free(tip);
-
-  tip = g_strdup_printf("Submit: %s", t_submit);
-  gtk_widget_set_tooltip_text(tab->submit_btn, tip);
-  g_free(tip);
-  if (strlen(t_cancel) > 0) {
-    tip = g_strdup_printf("Cancel: ESC, ESC / %s", t_cancel);
-  } else {
-    tip = g_strdup("Cancel: ESC, ESC");
-  }
-  gtk_widget_set_tooltip_text(tab->cancel_btn, tip);
-  g_free(tip);
-
-  gtk_widget_set_tooltip_text(tab->follow_up_check,
-                              "Continue last session instead of starting new");
-
-  tip = g_strdup_printf("Copy marked lines: %s", t_copy);
   status_bar_on_hover(tab->copy_btn, win, tip);
-  g_free(tip);
-  tip = g_strdup_printf("Close window: %s", t_close);
-  status_bar_on_hover(tab->close_btn, win, tip);
-  g_free(tip);
-  tip = g_strdup_printf("Close & quit: %s", t_quit);
-  status_bar_on_hover(tab->quit_btn, win, tip);
-  g_free(tip);
-  tip = g_strdup_printf("Open session log: %s", t_log);
-  status_bar_on_hover(tab->log_btn, win, tip);
-  g_free(tip);
-  tip = g_strdup_printf("Open shortcuts: %s", t_shortcuts);
-  status_bar_on_hover(tab->shortcuts_btn, win, tip);
-  g_free(tip);
-
-  tip = g_strdup_printf("Open session log: %s", t_log);
-  status_bar_on_hover(tab->log_btn_top, win, tip);
-  g_free(tip);
-  tip = g_strdup_printf("Open shortcuts: %s", t_shortcuts);
-  status_bar_on_hover(tab->shortcuts_btn_top, win, tip);
   g_free(tip);
 
   tip = g_strdup_printf("Submit prompt: %s", t_submit);
@@ -1647,6 +1575,11 @@ AppWindow *app_window_new(GtkApplication *app) {
                                  KB_FOLLOW_UP_TOGGLE);
   gtk_accelerator_parse(kb, &win->kb_follow_up_toggle_keyval,
                         &win->kb_follow_up_toggle_mods);
+  kb = runtime_config_get_string(win->config, "kb_menu_bar", KB_MENU_BAR);
+  gtk_accelerator_parse(kb, &win->kb_menu_bar_keyval, &win->kb_menu_bar_mods);
+  kb = runtime_config_get_string(win->config, "kb_status_bar", KB_STATUS_BAR);
+  gtk_accelerator_parse(kb, &win->kb_status_bar_keyval,
+                        &win->kb_status_bar_mods);
 
   {
     struct {
@@ -1669,6 +1602,8 @@ AppWindow *app_window_new(GtkApplication *app) {
         {"restore_tab", win->kb_restore_tab_keyval, win->kb_restore_tab_mods},
         {"follow_up_toggle", win->kb_follow_up_toggle_keyval,
          win->kb_follow_up_toggle_mods},
+        {"menu_bar", win->kb_menu_bar_keyval, win->kb_menu_bar_mods},
+        {"status_bar", win->kb_status_bar_keyval, win->kb_status_bar_mods},
     };
     gboolean conflict = FALSE;
     int n = (int)G_N_ELEMENTS(binds);
@@ -1731,6 +1666,266 @@ AppWindow *app_window_new(GtkApplication *app) {
   main_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
   gtk_window_set_child(GTK_WINDOW(win->window), main_box);
 
+  {
+    GSimpleActionGroup *actions;
+    GMenu *menu, *section;
+    gboolean bar_visible;
+    GSimpleAction *sact;
+
+    actions = g_simple_action_group_new();
+
+    g_action_map_add_action(G_ACTION_MAP(actions),
+                            G_ACTION(g_simple_action_new("new_tab", NULL)));
+    g_action_map_add_action(G_ACTION_MAP(actions),
+                            G_ACTION(g_simple_action_new("close_tab", NULL)));
+    g_action_map_add_action(G_ACTION_MAP(actions),
+                            G_ACTION(g_simple_action_new("restore_tab", NULL)));
+    g_action_map_add_action(G_ACTION_MAP(actions),
+                            G_ACTION(g_simple_action_new("close", NULL)));
+    g_action_map_add_action(G_ACTION_MAP(actions),
+                            G_ACTION(g_simple_action_new("quit", NULL)));
+    g_action_map_add_action(
+        G_ACTION_MAP(actions),
+        G_ACTION(g_simple_action_new("toggle_follow_up", NULL)));
+    g_action_map_add_action(G_ACTION_MAP(actions), G_ACTION(g_simple_action_new(
+                                                       "toggle_layout", NULL)));
+    g_action_map_add_action(G_ACTION_MAP(actions),
+                            G_ACTION(g_simple_action_new("session_log", NULL)));
+    g_action_map_add_action(G_ACTION_MAP(actions),
+                            G_ACTION(g_simple_action_new("shortcuts", NULL)));
+    g_action_map_add_action(G_ACTION_MAP(actions),
+                            G_ACTION(g_simple_action_new("about", NULL)));
+    g_action_map_add_action(G_ACTION_MAP(actions),
+                            G_ACTION(g_simple_action_new("submit", NULL)));
+    g_action_map_add_action(G_ACTION_MAP(actions),
+                            G_ACTION(g_simple_action_new("cancel", NULL)));
+    g_action_map_add_action(G_ACTION_MAP(actions),
+                            G_ACTION(g_simple_action_new("popout", NULL)));
+    g_action_map_add_action(G_ACTION_MAP(actions),
+                            G_ACTION(g_simple_action_new("copy_marked", NULL)));
+
+    g_signal_connect_data(
+        g_action_map_lookup_action(G_ACTION_MAP(actions), "close_tab"),
+        "activate", G_CALLBACK(on_menu_close_tab), win, NULL, 0);
+    g_signal_connect_data(
+        g_action_map_lookup_action(G_ACTION_MAP(actions), "toggle_follow_up"),
+        "activate", G_CALLBACK(on_menu_toggle_follow_up), win, NULL, 0);
+    g_signal_connect_data(
+        g_action_map_lookup_action(G_ACTION_MAP(actions), "toggle_layout"),
+        "activate", G_CALLBACK(on_menu_toggle_layout), win, NULL, 0);
+    g_signal_connect_data(
+        g_action_map_lookup_action(G_ACTION_MAP(actions), "popout"), "activate",
+        G_CALLBACK(on_menu_popout), win, NULL, 0);
+
+    g_signal_connect_swapped(
+        g_action_map_lookup_action(G_ACTION_MAP(actions), "new_tab"),
+        "activate", G_CALLBACK(on_new_tab_clicked), win);
+    g_signal_connect_swapped(
+        g_action_map_lookup_action(G_ACTION_MAP(actions), "restore_tab"),
+        "activate", G_CALLBACK(on_restore_tab), win);
+    g_signal_connect_swapped(
+        g_action_map_lookup_action(G_ACTION_MAP(actions), "close"), "activate",
+        G_CALLBACK(on_close), win);
+    g_signal_connect_swapped(
+        g_action_map_lookup_action(G_ACTION_MAP(actions), "quit"), "activate",
+        G_CALLBACK(on_quit), win);
+    g_signal_connect_swapped(
+        g_action_map_lookup_action(G_ACTION_MAP(actions), "session_log"),
+        "activate", G_CALLBACK(on_log), win);
+    g_signal_connect_swapped(
+        g_action_map_lookup_action(G_ACTION_MAP(actions), "shortcuts"),
+        "activate", G_CALLBACK(on_shortcuts), win);
+    g_signal_connect_swapped(
+        g_action_map_lookup_action(G_ACTION_MAP(actions), "about"), "activate",
+        G_CALLBACK(on_about), win);
+    g_signal_connect_swapped(
+        g_action_map_lookup_action(G_ACTION_MAP(actions), "submit"), "activate",
+        G_CALLBACK(on_submit), win);
+    g_signal_connect_swapped(
+        g_action_map_lookup_action(G_ACTION_MAP(actions), "cancel"), "activate",
+        G_CALLBACK(on_cancel), win);
+    g_signal_connect_swapped(
+        g_action_map_lookup_action(G_ACTION_MAP(actions), "copy_marked"),
+        "activate", G_CALLBACK(on_copy), win);
+
+    bar_visible = runtime_config_get_bool(win->config, "menu_bar_visible",
+                                          MENU_BAR_VISIBLE_DEFAULT);
+    sact = g_simple_action_new_stateful("menu_bar_visible", NULL,
+                                        g_variant_new_boolean(bar_visible));
+    g_signal_connect(sact, "change-state", G_CALLBACK(on_menu_toggle_bar), win);
+    g_action_map_add_action(G_ACTION_MAP(actions), G_ACTION(sact));
+    win->menu_bar_action = sact;
+
+    {
+      gboolean sb_visible;
+
+      sb_visible = runtime_config_get_bool(win->config, "status_bar_visible",
+                                           STATUS_BAR_VISIBLE_DEFAULT);
+      sact = g_simple_action_new_stateful("status_bar_visible", NULL,
+                                          g_variant_new_boolean(sb_visible));
+      g_signal_connect(sact, "change-state",
+                       G_CALLBACK(on_menu_toggle_status_bar), win);
+      g_action_map_add_action(G_ACTION_MAP(actions), G_ACTION(sact));
+      win->status_bar_action = sact;
+    }
+
+    gtk_widget_insert_action_group(win->window, "win", G_ACTION_GROUP(actions));
+
+    menu = g_menu_new();
+
+    {
+      GMenuItem *item;
+      const char *accel;
+
+      section = g_menu_new();
+
+      accel = runtime_config_get_string(win->config, "kb_new_tab", KB_NEW_TAB);
+      item = g_menu_item_new("New Tab", "win.new_tab");
+      if (accel != NULL && accel[0] != '\0')
+        g_menu_item_set_attribute(item, "accel", "s", accel);
+      g_menu_append_item(section, item);
+
+      accel =
+          runtime_config_get_string(win->config, "kb_close_tab", KB_CLOSE_TAB);
+      item = g_menu_item_new("Close Tab", "win.close_tab");
+      if (accel != NULL && accel[0] != '\0')
+        g_menu_item_set_attribute(item, "accel", "s", accel);
+      g_menu_append_item(section, item);
+
+      accel = runtime_config_get_string(win->config, "kb_restore_tab",
+                                        KB_RESTORE_TAB);
+      item = g_menu_item_new("Restore Closed Tab", "win.restore_tab");
+      if (accel != NULL && accel[0] != '\0')
+        g_menu_item_set_attribute(item, "accel", "s", accel);
+      g_menu_append_item(section, item);
+
+      g_menu_append_section(section, NULL, G_MENU_MODEL(g_menu_new()));
+
+      accel = runtime_config_get_string(win->config, "kb_close", KB_CLOSE);
+      item = g_menu_item_new("Close", "win.close");
+      if (accel != NULL && accel[0] != '\0')
+        g_menu_item_set_attribute(item, "accel", "s", accel);
+      g_menu_append_item(section, item);
+
+      accel = runtime_config_get_string(win->config, "kb_quit", KB_QUIT);
+      item = g_menu_item_new("Close & Quit", "win.quit");
+      if (accel != NULL && accel[0] != '\0')
+        g_menu_item_set_attribute(item, "accel", "s", accel);
+      g_menu_append_item(section, item);
+
+      g_menu_append_submenu(menu, "File", G_MENU_MODEL(section));
+    }
+
+    {
+      GMenuItem *item;
+      const char *accel;
+
+      section = g_menu_new();
+
+      accel = runtime_config_get_string(win->config, "kb_submit", KB_SUBMIT);
+      item = g_menu_item_new("Submit", "win.submit");
+      if (accel != NULL && accel[0] != '\0')
+        g_menu_item_set_attribute(item, "accel", "s", accel);
+      g_menu_append_item(section, item);
+
+      accel = runtime_config_get_string(win->config, "kb_cancel", KB_CANCEL);
+      item = g_menu_item_new("Cancel", "win.cancel");
+      if (accel != NULL && accel[0] != '\0')
+        g_menu_item_set_attribute(item, "accel", "s", accel);
+      else
+        g_menu_item_set_attribute(item, "accel", "s", "Escape, Escape");
+      g_menu_append_item(section, item);
+
+      g_menu_append_section(section, NULL, G_MENU_MODEL(g_menu_new()));
+
+      accel = runtime_config_get_string(win->config, "kb_follow_up_toggle",
+                                        KB_FOLLOW_UP_TOGGLE);
+      item = g_menu_item_new("Toggle Follow-up", "win.toggle_follow_up");
+      if (accel != NULL && accel[0] != '\0')
+        g_menu_item_set_attribute(item, "accel", "s", accel);
+      g_menu_append_item(section, item);
+
+      g_menu_append_section(section, NULL, G_MENU_MODEL(g_menu_new()));
+
+      accel = runtime_config_get_string(win->config, "kb_layout", KB_LAYOUT);
+      item = g_menu_item_new("Toggle Layout", "win.toggle_layout");
+      if (accel != NULL && accel[0] != '\0')
+        g_menu_item_set_attribute(item, "accel", "s", accel);
+      g_menu_append_item(section, item);
+
+      accel = runtime_config_get_string(win->config, "kb_popout", KB_POPOUT);
+      item = g_menu_item_new("Undock", "win.popout");
+      if (accel != NULL && accel[0] != '\0')
+        g_menu_item_set_attribute(item, "accel", "s", accel);
+      g_menu_append_item(section, item);
+
+      g_menu_append_section(section, NULL, G_MENU_MODEL(g_menu_new()));
+
+      accel = runtime_config_get_string(win->config, "kb_copy_marked",
+                                        KB_COPY_MARKED);
+      item = g_menu_item_new("Copy Marked Lines", "win.copy_marked");
+      if (accel != NULL && accel[0] != '\0')
+        g_menu_item_set_attribute(item, "accel", "s", accel);
+      g_menu_append_item(section, item);
+
+      g_menu_append_submenu(menu, "Actions", G_MENU_MODEL(section));
+    }
+
+    {
+      GMenuItem *item;
+      const char *accel;
+
+      section = g_menu_new();
+
+      accel =
+          runtime_config_get_string(win->config, "kb_menu_bar", KB_MENU_BAR);
+      item = g_menu_item_new("Show Menu Bar", "win.menu_bar_visible");
+      if (accel != NULL && accel[0] != '\0')
+        g_menu_item_set_attribute(item, "accel", "s", accel);
+      g_menu_append_item(section, item);
+
+      accel = runtime_config_get_string(win->config, "kb_status_bar",
+                                        KB_STATUS_BAR);
+      item = g_menu_item_new("Show Status Bar", "win.status_bar_visible");
+      if (accel != NULL && accel[0] != '\0')
+        g_menu_item_set_attribute(item, "accel", "s", accel);
+      g_menu_append_item(section, item);
+
+      g_menu_append_submenu(menu, "View", G_MENU_MODEL(section));
+    }
+
+    {
+      GMenuItem *item;
+      const char *accel;
+
+      section = g_menu_new();
+
+      accel = runtime_config_get_string(win->config, "kb_log", KB_LOG);
+      item = g_menu_item_new("Session Log", "win.session_log");
+      if (accel != NULL && accel[0] != '\0')
+        g_menu_item_set_attribute(item, "accel", "s", accel);
+      g_menu_append_item(section, item);
+
+      accel =
+          runtime_config_get_string(win->config, "kb_shortcuts", KB_SHORTCUTS);
+      item = g_menu_item_new("Keyboard Shortcuts", "win.shortcuts");
+      if (accel != NULL && accel[0] != '\0')
+        g_menu_item_set_attribute(item, "accel", "s", accel);
+      g_menu_append_item(section, item);
+
+      g_menu_append_section(section, NULL, G_MENU_MODEL(g_menu_new()));
+
+      item = g_menu_item_new("About Promptr", "win.about");
+      g_menu_append_item(section, item);
+
+      g_menu_append_submenu(menu, "Help", G_MENU_MODEL(section));
+    }
+
+    win->menu_bar = gtk_popover_menu_bar_new_from_model(G_MENU_MODEL(menu));
+    gtk_widget_set_visible(win->menu_bar, bar_visible);
+    gtk_box_prepend(GTK_BOX(main_box), win->menu_bar);
+  }
+
   win->cmd_label = gtk_text_view_new();
   gtk_text_view_set_editable(GTK_TEXT_VIEW(win->cmd_label), FALSE);
   gtk_text_view_set_cursor_visible(GTK_TEXT_VIEW(win->cmd_label), FALSE);
@@ -1744,6 +1939,7 @@ AppWindow *app_window_new(GtkApplication *app) {
   log_append(win, "session \xe2\x86\x92 started");
 
   status_bar_widget = create_status_bar(win);
+  win->status_bar_box = status_bar_widget;
 
   win->tab_bar = gtk_notebook_new();
   gtk_notebook_set_scrollable(GTK_NOTEBOOK(win->tab_bar), TRUE);
@@ -1781,6 +1977,14 @@ AppWindow *app_window_new(GtkApplication *app) {
 
   gtk_box_append(GTK_BOX(main_box), win->tab_bar);
   gtk_box_append(GTK_BOX(main_box), status_bar_widget);
+
+  {
+    gboolean sb_visible;
+
+    sb_visible = runtime_config_get_bool(win->config, "status_bar_visible",
+                                         STATUS_BAR_VISIBLE_DEFAULT);
+    gtk_widget_set_visible(win->status_bar_box, sb_visible);
+  }
 
   g_signal_connect(win->tab_bar, "switch-page",
                    G_CALLBACK(on_notebook_page_switched), win);
@@ -2533,7 +2737,7 @@ static void on_shortcuts(AppWindow *win) {
     gtk_window_set_destroy_with_parent(GTK_WINDOW(popup), TRUE);
     gtk_window_set_hide_on_close(GTK_WINDOW(popup), TRUE);
     gtk_window_set_title(GTK_WINDOW(popup), "Keyboard Shortcuts");
-    gtk_window_set_default_size(GTK_WINDOW(popup), 460, 480);
+    gtk_window_set_default_size(GTK_WINDOW(popup), 460, 500);
     gtk_window_set_resizable(GTK_WINDOW(popup), TRUE);
 
     box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
@@ -2606,8 +2810,40 @@ static void on_shortcuts(AppWindow *win) {
         {NULL, "Close tab"},
         {NULL, "Restore closed tab"},
         {NULL, "Toggle follow-up"},
+        {NULL, "Toggle menu bar"},
+        {NULL, "Toggle status bar"},
         {NULL, "Switch to tab 1-9"},
     };
+
+    rows[0].shortcut = accel_to_human(runtime_config_get_string(
+        win->config, "kb_focus_prompt", KB_FOCUS_PROMPT));
+    rows[1].shortcut = accel_to_human(runtime_config_get_string(
+        win->config, "kb_copy_marked", KB_COPY_MARKED));
+    rows[2].shortcut = accel_to_human(
+        runtime_config_get_string(win->config, "kb_close", KB_CLOSE));
+    rows[3].shortcut = accel_to_human(
+        runtime_config_get_string(win->config, "kb_quit", KB_QUIT));
+    rows[4].shortcut = accel_to_human(
+        runtime_config_get_string(win->config, "kb_log", KB_LOG));
+    rows[5].shortcut = accel_to_human(
+        runtime_config_get_string(win->config, "kb_shortcuts", KB_SHORTCUTS));
+    rows[6].shortcut = accel_to_human(
+        runtime_config_get_string(win->config, "kb_submit", KB_SUBMIT));
+    rows[7].shortcut = "esc, esc";
+    rows[8].shortcut = accel_to_human(
+        runtime_config_get_string(win->config, "kb_new_tab", KB_NEW_TAB));
+    rows[9].shortcut = accel_to_human(
+        runtime_config_get_string(win->config, "kb_close_tab", KB_CLOSE_TAB));
+    rows[10].shortcut = accel_to_human(runtime_config_get_string(
+        win->config, "kb_restore_tab", KB_RESTORE_TAB));
+    rows[11].shortcut = accel_to_human(runtime_config_get_string(
+        win->config, "kb_follow_up_toggle", KB_FOLLOW_UP_TOGGLE));
+    rows[12].shortcut = accel_to_human(
+        runtime_config_get_string(win->config, "kb_menu_bar", KB_MENU_BAR));
+    rows[13].shortcut = accel_to_human(
+        runtime_config_get_string(win->config, "kb_status_bar", KB_STATUS_BAR));
+    rows[14].shortcut = "alt+1..9";
+
     for (int i = 0; i < (int)G_N_ELEMENTS(rows); i++) {
       GtkWidget *k, *d;
       const char *row_class;
@@ -2621,7 +2857,7 @@ static void on_shortcuts(AppWindow *win) {
     }
 
     for (int i = 0; i < (int)G_N_ELEMENTS(rows); i++)
-      if (i != 7 && i != 12)
+      if (i != 7 && i != 14)
         g_free((char *)rows[i].shortcut);
 
     gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scroll), grid);
@@ -2657,6 +2893,96 @@ static void on_shortcuts(AppWindow *win) {
   if (gtk_widget_is_visible(win->shortcuts_popup))
     gtk_widget_set_visible(win->shortcuts_popup, FALSE);
   gtk_window_present(GTK_WINDOW(win->shortcuts_popup));
+}
+
+/* ── menu bar actions ────────────────────────────────────────────── */
+
+static void on_menu_toggle_bar(GSimpleAction *action, GVariant *state,
+                               gpointer user_data) {
+  AppWindow *win = user_data;
+  gboolean visible;
+
+  (void)action;
+  visible = g_variant_get_boolean(state);
+  g_simple_action_set_state(action, state);
+  gtk_widget_set_visible(win->menu_bar, visible);
+}
+
+static void on_menu_close_tab(GSimpleAction *action, GVariant *param,
+                              gpointer user_data) {
+  AppWindow *win = user_data;
+  Tab *tab;
+
+  (void)action;
+  (void)param;
+  tab = app_window_get_active_tab(win);
+  if (tab != NULL)
+    close_tab(win, win->active_tab_idx);
+}
+
+static void on_menu_toggle_follow_up(GSimpleAction *action, GVariant *param,
+                                     gpointer user_data) {
+  AppWindow *win = user_data;
+  Tab *tab;
+
+  (void)action;
+  (void)param;
+  tab = app_window_get_active_tab(win);
+  if (tab != NULL && gtk_widget_is_sensitive(tab->follow_up_check))
+    gtk_check_button_set_active(GTK_CHECK_BUTTON(tab->follow_up_check),
+                                !tab->follow_up);
+}
+
+static void on_menu_toggle_layout(GSimpleAction *action, GVariant *param,
+                                  gpointer user_data) {
+  AppWindow *win = user_data;
+  Tab *tab;
+
+  (void)action;
+  (void)param;
+  tab = app_window_get_active_tab(win);
+  if (tab != NULL && !tab->output_popped) {
+    tab->layout_mode = !tab->layout_mode;
+    apply_layout(tab);
+  }
+}
+
+static void on_menu_popout(GSimpleAction *action, GVariant *param,
+                           gpointer user_data) {
+  AppWindow *win = user_data;
+  Tab *tab;
+
+  (void)action;
+  (void)param;
+  tab = app_window_get_active_tab(win);
+  if (tab != NULL)
+    toggle_popout(tab);
+}
+
+static void on_menu_toggle_status_bar(GSimpleAction *action, GVariant *state,
+                                      gpointer user_data) {
+  AppWindow *win = user_data;
+  gboolean visible;
+
+  (void)action;
+  visible = g_variant_get_boolean(state);
+  g_simple_action_set_state(action, state);
+  gtk_widget_set_visible(win->status_bar_box, visible);
+}
+
+static void on_about(AppWindow *win) {
+  const char *authors[] = {"toxdes", NULL};
+
+  gtk_show_about_dialog(
+      GTK_WINDOW(win->window), "program-name", "Promptr", "version", VERSION,
+      "comments",
+      "promptr is a GTK4-based desktop prompt client for opencode. "
+      "It provides a tabbed interface for running multiple queries "
+      "in parallel, with configurable keyboard shortcuts, follow-up "
+      "chains, and output persistence.",
+      "copyright", "2024-2026 toxdes", "license-type", GTK_LICENSE_MIT_X11,
+      "website", "https://github.com/toxdes/promptr", "website-label", "GitHub",
+      "authors", authors, "wrap-license", TRUE, NULL);
 }
 
 /* ── key handling ──────────────────────────────────────────────── */
@@ -2833,6 +3159,32 @@ static gboolean on_window_key_pressed(GtkEventControllerKey *controller,
     if (tab != NULL && gtk_widget_is_sensitive(tab->follow_up_check))
       gtk_check_button_set_active(GTK_CHECK_BUTTON(tab->follow_up_check),
                                   !tab->follow_up);
+    return GDK_EVENT_STOP;
+  }
+
+  /* ctrl+m: toggle menu bar */
+  if (win->kb_menu_bar_keyval != 0 && keyval == win->kb_menu_bar_keyval &&
+      mods == win->kb_menu_bar_mods) {
+    gboolean visible;
+
+    visible = gtk_widget_is_visible(win->menu_bar);
+    gtk_widget_set_visible(win->menu_bar, !visible);
+    if (win->menu_bar_action != NULL)
+      g_simple_action_set_state(win->menu_bar_action,
+                                g_variant_new_boolean(!visible));
+    return GDK_EVENT_STOP;
+  }
+
+  /* ctrl+j: toggle status bar */
+  if (win->kb_status_bar_keyval != 0 && keyval == win->kb_status_bar_keyval &&
+      mods == win->kb_status_bar_mods) {
+    gboolean visible;
+
+    visible = gtk_widget_is_visible(win->status_bar_box);
+    gtk_widget_set_visible(win->status_bar_box, !visible);
+    if (win->status_bar_action != NULL)
+      g_simple_action_set_state(win->status_bar_action,
+                                g_variant_new_boolean(!visible));
     return GDK_EVENT_STOP;
   }
 

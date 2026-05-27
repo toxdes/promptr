@@ -9,12 +9,14 @@ typedef struct _AppWindow {
   GtkApplication *app;
   GtkWidget *window;
   GtkWidget *cmd_label;
-
-  GtkWidget *log_btn;
-  GtkWidget *log_popup;
-  GtkWidget *shortcuts_btn;
-  GtkWidget *shortcuts_popup;
+  GtkWidget *menu_bar;
   GtkWidget *status_bar;
+  GtkWidget *status_bar_box;
+  GSimpleAction *menu_bar_action;
+  GSimpleAction *status_bar_action;
+
+  GtkWidget *log_popup;
+  GtkWidget *shortcuts_popup;
   FILE *log_file;
 
   gboolean destroyed;
@@ -57,6 +59,10 @@ typedef struct _AppWindow {
   GdkModifierType kb_restore_tab_mods;
   guint kb_follow_up_toggle_keyval;
   GdkModifierType kb_follow_up_toggle_mods;
+  guint kb_menu_bar_keyval;
+  GdkModifierType kb_menu_bar_mods;
+  guint kb_status_bar_keyval;
+  GdkModifierType kb_status_bar_mods;
 } AppWindow;
 
 AppWindow *app_window_new(GtkApplication *app);
