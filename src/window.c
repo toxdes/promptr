@@ -967,8 +967,14 @@ static Tab *add_new_tab(AppWindow *win) {
 
 static void close_tab(AppWindow *win, int idx) {
   if (win->tabs->len <= 1) {
-    add_new_tab(win);
+    Tab *t;
+
+    t = add_new_tab(win);
     idx = win->tabs->len - 2;
+
+    apply_layout(t);
+    setup_tooltips(t, win);
+    update_cmd_preview(t);
   }
 
   if (idx < 0 || idx >= (int)win->tabs->len)
