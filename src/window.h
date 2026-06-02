@@ -70,8 +70,6 @@ void app_window_show(AppWindow *win);
 void app_window_present(AppWindow *win);
 void app_window_close_and_quit(AppWindow *win);
 void app_window_free(gpointer data);
-void app_window_save_state(AppWindow *win);
-
 Tab *app_window_get_active_tab(AppWindow *win);
 
 #endif

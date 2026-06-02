@@ -2,7 +2,6 @@
 #include "command.h"
 #include "config.h"
 #include "configfile.h"
-#include "state.h"
 
 #include <gtk4-layer-shell/gtk4-layer-shell.h>
 #include <gtksourceview/gtksource.h>
@@ -108,7 +107,6 @@ static void esc_ctx_free(gpointer data, GClosure *closure) {
   (void)closure;
   g_free(data);
 }
-static void app_window_restore_state(AppWindow *win);
 static void set_status_text(AppWindow *win, const char *text);
 static void log_append(AppWindow *win, const char *fmt, ...)
     __attribute__((format(printf, 2, 3)));
@@ -469,7 +467,6 @@ static GtkWidget *create_action_row(Tab *tab, AppWindow *win) {
 static void tab_switch_to(AppWindow *win, int idx);
 static void close_tab(AppWindow *win, int idx);
 static void on_new_tab_clicked(AppWindow *win);
-
 GtkWidget *tab_create_widgets(Tab *tab, AppWindow *win) {
   GtkWidget *page;
 
@@ -2071,7 +2068,6 @@ AppWindow *app_window_new(GtkApplication *app) {
 
   setup_tooltips(tab, win);
   apply_layout(tab);
-  app_window_restore_state(win);
   update_cmd_preview(tab);
 
   return win;
@@ -3505,8 +3501,6 @@ static gboolean hex_to_rgba(const char *hex, GdkRGBA *out) {
 /* ── dropdown change ──────────────────────────────────────────── */
 
 static void on_dropdown_changed(GObject *self, GParamSpec *pspec, Tab *tab) {
-  char *agent, *model;
-
   (void)self;
   (void)pspec;
 
@@ -3514,12 +3508,6 @@ static void on_dropdown_changed(GObject *self, GParamSpec *pspec, Tab *tab) {
     return;
 
   update_cmd_preview(tab);
-
-  agent = get_selected_text(tab->agent_dropdown);
-  model = get_selected_text(tab->model_dropdown);
-  state_save(model, agent);
-  g_free(agent);
-  g_free(model);
 }
 
 /* ── cmd preview ──────────────────────────────────────────────── */
@@ -3735,64 +3723,6 @@ static char *get_marked_text(Tab *tab) {
   }
 
   return g_string_free(result, FALSE);
-}
-
-/* ── state persistence ────────────────────────────────────────── */
-
-void app_window_save_state(AppWindow *win) {
-  Tab *tab;
-  char *agent, *model;
-
-  tab = app_window_get_active_tab(win);
-  if (tab == NULL)
-    return;
-
-  agent = get_selected_text(tab->agent_dropdown);
-  model = get_selected_text(tab->model_dropdown);
-  state_save(model, agent);
-  g_free(agent);
-  g_free(model);
-}
-
-static void select_option_by_value(GtkWidget *dropdown, const char *value) {
-  GListModel *model;
-  guint i, n;
-
-  if (value == NULL)
-    return;
-
-  model = gtk_drop_down_get_model(GTK_DROP_DOWN(dropdown));
-  n = g_list_model_get_n_items(model);
-  for (i = 0; i < n; i++) {
-    g_autoptr(GObject) item = g_list_model_get_item(model, i);
-    const char *str;
-
-    if (item == NULL)
-      continue;
-    str = gtk_string_object_get_string(GTK_STRING_OBJECT(item));
-    if (str != NULL && g_strcmp0(str, value) == 0) {
-      gtk_drop_down_set_selected(GTK_DROP_DOWN(dropdown), i);
-      return;
-    }
-  }
-}
-
-static void app_window_restore_state(AppWindow *win) {
-  Tab *tab;
-  g_autofree char *model = NULL;
-  g_autofree char *agent = NULL;
-
-  tab = app_window_get_active_tab(win);
-  if (tab == NULL)
-    return;
-
-  if (!state_load(&model, &agent))
-    return;
-
-  if (model != NULL)
-    select_option_by_value(tab->model_dropdown, model);
-  if (agent != NULL)
-    select_option_by_value(tab->agent_dropdown, agent);
 }
 
 /* ── CSS ───────────────────────────────────────────────────────── */
