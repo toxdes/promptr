@@ -1,18 +1,18 @@
 #ifndef COMMAND_H
 #define COMMAND_H
 
-#include "window.h"
+#include "tab.h"
 #include <gtk/gtk.h>
 
-typedef void (*CommandCallback)(AppWindow *win, const char *output,
+typedef void (*CommandCallback)(Tab *tab, const char *output,
                                 const char *stderr_output, gint64 elapsed_us,
                                 int exit_code, gboolean exited_cleanly);
 
-void command_execute(AppWindow *win, const char *model, const char *agent,
+void command_execute(Tab *tab, const char *model, const char *agent,
                      const char *query, const char *workdir,
                      const char *opencode_bin, gboolean follow_up,
                      CommandCallback callback);
 
-void command_cancel(AppWindow *win);
+void command_cancel(Tab *tab);
 
 #endif

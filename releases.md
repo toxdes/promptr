@@ -188,3 +188,46 @@ Pushes PKGBUILD and `.SRCINFO` to `promptr-git` and `promptr-bin` on the AUR.
 ```
 
 Requires an SSH key registered with your AUR account.
+
+## Cloudflare Cache
+
+The domain `packages.toxdes.com` serves R2 via Cloudflare with long cache TTLs.
+After publishing, purge the cache so users get the latest packages:
+
+```sh
+# Check current TTL settings
+./cf-purge-cache.py --check-ttl
+
+# Set TTLs to 1 year (run once)
+./cf-purge-cache.py --set-ttl
+
+# Purge cache after publishing
+./cf-purge-cache.py
+
+# Dry-run (show what would happen)
+./cf-purge-cache.py --dry-run
+```
+
+All commands load credentials from an env file:
+
+```sh
+./cf-purge-cache.py --env <path-to-env-file>
+```
+
+### Environment
+
+| Variable | Purpose |
+|---|---|
+| `CF_API_TOKEN` | Cloudflare API token with `Zone.Cache Purge` + `Zone Settings` |
+| `CF_ZONE_ID` | Zone ID for `toxdes.com` |
+| `CF_BROWSER_TTL` | Browser cache TTL in seconds (for `--set-ttl`) |
+| `CF_EDGE_TTL` | Edge cache TTL in seconds (for `--set-ttl`) |
+
+### Token permissions
+
+Create a **Custom API token** at https://dash.cloudflare.com/profile/api-tokens/:
+
+| Permission | Level | Resource |
+|---|---|---|
+| `Zone` → `Cache Purge` | *(only action)* | `toxdes.com` |
+| `Zone` → `Zone Settings` | `Edit` | `toxdes.com` |

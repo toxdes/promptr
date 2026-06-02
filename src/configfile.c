@@ -1,8 +1,12 @@
 #include "configfile.h"
 #include "config.h"
+#include <gtk/gtk.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 
 #define GROUP       "preferences"
-#define CONFIG_DIR  "promptr"
+#define CONFIG_DIR  DATA_DIR_SUFFIX
 #define CONFIG_FILE "config"
 
 struct _RuntimeConfig {
@@ -65,6 +69,22 @@ static const ConfigDefault CONFIG_DEFAULTS[] = {
     {"kb_popout", KB_POPOUT,
      "# Pop out the output text area into its own window"},
     {"layout", LAYOUT_DEFAULT, "# UI layout (\"horizontal\" or \"vertical\")"},
+    {"kb_new_tab", KB_NEW_TAB, "# Create new tab"},
+    {"kb_close_tab", KB_CLOSE_TAB, "# Close current tab"},
+    {"kb_restore_tab", KB_RESTORE_TAB, "# Restore last closed tab"},
+    {"kb_follow_up_toggle", KB_FOLLOW_UP_TOGGLE, "# Toggle follow-up checkbox"},
+    {"tab_position", TAB_POSITION_DEFAULT,
+     "# Tab bar position (\"top\" or \"bottom\")"},
+    {"tab_confirm_before_close", G_STRINGIFY(TAB_CONFIRM_BEFORE_CLOSE_DEFAULT),
+     "# Show confirmation dialog before closing active tabs (0 or 1)"},
+    {"tab_show_add_button", G_STRINGIFY(TAB_SHOW_ADD_BUTTON_DEFAULT),
+     "# Show the + (add new tab) button (0 or 1)"},
+    {"kb_menu_bar", KB_MENU_BAR, "# Toggle menu bar visibility"},
+    {"menu_bar_visible", G_STRINGIFY(MENU_BAR_VISIBLE_DEFAULT),
+     "# Show menu bar at startup (0 or 1)"},
+    {"kb_status_bar", KB_STATUS_BAR, "# Toggle status bar visibility"},
+    {"status_bar_visible", G_STRINGIFY(STATUS_BAR_VISIBLE_DEFAULT),
+     "# Show status bar at startup (0 or 1)"},
     {NULL, NULL, NULL}};
 
 static void migrate_config(const char *path, GKeyFile *kf) {
