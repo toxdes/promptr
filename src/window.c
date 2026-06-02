@@ -83,6 +83,7 @@ static GtkWidget *create_status_bar(AppWindow *win);
 static void setup_tooltips(Tab *tab, AppWindow *win);
 static void apply_layout(Tab *tab);
 static void toggle_popout(Tab *tab);
+static void close_popups(AppWindow *win);
 struct PopupEscCtx {
   gpointer data;
   void (*close_fn)(gpointer);
@@ -2163,8 +2164,7 @@ void app_window_close_and_quit(AppWindow *win) {
     }
   }
 
-  if (win->log_popup != NULL)
-    gtk_window_destroy(GTK_WINDOW(win->log_popup));
+  close_popups(win);
   if (win->log_file != NULL) {
     fclose(win->log_file);
     win->log_file = NULL;
@@ -2612,6 +2612,26 @@ static void on_quit(AppWindow *win) {
   g_application_quit(G_APPLICATION(win->app));
 }
 
+static void close_popups(AppWindow *win) {
+  guint i;
+
+  for (i = 0; i < win->tabs->len; i++) {
+    Tab *t = g_ptr_array_index(win->tabs, i);
+
+    if (t->output_popped)
+      toggle_popout(t);
+  }
+
+  if (win->shortcuts_popup != NULL) {
+    gtk_window_destroy(GTK_WINDOW(win->shortcuts_popup));
+    win->shortcuts_popup = NULL;
+  }
+  if (win->log_popup != NULL) {
+    gtk_window_destroy(GTK_WINDOW(win->log_popup));
+    win->log_popup = NULL;
+  }
+}
+
 static gboolean on_close_request(GtkWindow *window, gpointer user_data) {
   AppWindow *win = user_data;
   guint i;
@@ -2629,6 +2649,9 @@ static gboolean on_close_request(GtkWindow *window, gpointer user_data) {
   tab = app_window_get_active_tab(win);
   if (tab != NULL && tab->subprocess != NULL)
     command_cancel(tab);
+
+  close_popups(win);
+
   gtk_widget_set_visible(win->window, FALSE);
   return TRUE;
 }
