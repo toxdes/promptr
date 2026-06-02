@@ -614,7 +614,6 @@ GtkWidget *tab_create_label(Tab *tab, int idx, AppWindow *win) {
   gtk_label_set_yalign(GTK_LABEL(close_btn), 0.5f);
   gtk_widget_set_margin_top(close_btn, 2);
   gtk_widget_set_margin_bottom(close_btn, 2);
-  gtk_widget_set_cursor_from_name(close_btn, "pointer");
   {
     GtkGesture *g;
 
@@ -3805,11 +3804,13 @@ static void load_css(int prompt_font_size, int output_font_size) {
                        "  color: white;"
                        "  background-color: alpha(currentColor, 0.12);"
                        "  border-radius: 3px;"
+                       "  opacity: 0.85;"
                        "}"
                        "notebook tab:checked .tab-close-btn {"
                        "  background-color: #c42b1c;"
                        "}"
                        ".tab-close-btn:hover {"
+                       "  opacity: 1;"
                        "  background-color: #e03a2a;"
                        "}"
                        ".tab-drop-target {"
