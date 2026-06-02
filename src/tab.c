@@ -57,8 +57,11 @@ static void tab_free(Tab *tab) {
   if (tab == NULL)
     return;
 
-  if (tab->subprocess != NULL)
+  if (tab->subprocess != NULL) {
     command_cancel(tab);
+    g_clear_object(&tab->subprocess);
+    g_clear_object(&tab->cancellable);
+  }
 
   g_list_free_full(tab->qa_history, g_free);
   g_free(tab->id);
@@ -124,7 +127,7 @@ void tab_save(Tab *tab) {
   g_key_file_set_boolean(kf, "tab", "follow_up", tab->follow_up);
 
   {
-    const char *agent, *model;
+    char *agent, *model;
 
     agent = get_selected_text(tab->agent_dropdown);
     model = get_selected_text(tab->model_dropdown);
@@ -132,8 +135,8 @@ void tab_save(Tab *tab) {
       g_key_file_set_string(kf, "tab", "agent", agent);
     if (model != NULL)
       g_key_file_set_string(kf, "tab", "model", model);
-    g_free((gpointer)agent);
-    g_free((gpointer)model);
+    g_free(agent);
+    g_free(model);
   }
 
   now = time(NULL);
@@ -405,6 +408,9 @@ void tab_auto_rename(Tab *tab) {
       }
     }
   }
+
+  if (tab->win == NULL)
+    return;
 
   nb = GTK_NOTEBOOK(tab->win->tab_bar);
   n_pages = gtk_notebook_get_n_pages(nb);

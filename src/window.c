@@ -961,7 +961,6 @@ static Tab *add_new_tab(AppWindow *win) {
   label_widget = tab_create_label(tab, idx, win);
 
   gtk_notebook_append_page(GTK_NOTEBOOK(win->tab_bar), page, label_widget);
-  (void)idx;
   return tab;
 }
 
@@ -985,8 +984,8 @@ static void close_tab(AppWindow *win, int idx) {
     }
   }
 
-  g_ptr_array_remove_index(win->tabs, idx);
   gtk_notebook_remove_page(GTK_NOTEBOOK(win->tab_bar), idx);
+  g_ptr_array_remove_index(win->tabs, idx);
 
   if (win->tabs->len == 0)
     add_new_tab(win);
@@ -3453,7 +3452,7 @@ static void log_append(AppWindow *win, const char *fmt, ...) {
 }
 
 static gboolean hex_to_rgba(const char *hex, GdkRGBA *out) {
-  unsigned int r, g, b;
+  unsigned int r, g, b, a_val;
   double a;
 
   if (hex == NULL || hex[0] != '#')
@@ -3461,9 +3460,8 @@ static gboolean hex_to_rgba(const char *hex, GdkRGBA *out) {
 
   if (sscanf(hex + 1, "%2x%2x%2x", &r, &g, &b) == 3) {
     a = 0.60;
-  } else if (sscanf(hex + 1, "%2x%2x%2x%2x", &r, &g, &b, (unsigned int *)&a) ==
-             4) {
-    a /= 255.0;
+  } else if (sscanf(hex + 1, "%2x%2x%2x%2x", &r, &g, &b, &a_val) == 4) {
+    a = a_val / 255.0;
   } else {
     return FALSE;
   }
