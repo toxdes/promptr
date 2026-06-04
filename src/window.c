@@ -70,6 +70,18 @@ static void on_menu_popout(GSimpleAction *action, GVariant *param,
                            gpointer user_data);
 static void on_menu_toggle_status_bar(GSimpleAction *action, GVariant *state,
                                       gpointer user_data);
+static void on_menu_cycle_agent_next(GSimpleAction *action, GVariant *param,
+                                     gpointer user_data);
+static void on_menu_cycle_agent_prev(GSimpleAction *action, GVariant *param,
+                                     gpointer user_data);
+static void on_menu_cycle_model_next(GSimpleAction *action, GVariant *param,
+                                     gpointer user_data);
+static void on_menu_cycle_model_prev(GSimpleAction *action, GVariant *param,
+                                     gpointer user_data);
+static void on_menu_cycle_agent_set(GSimpleAction *action, GVariant *param,
+                                    gpointer user_data);
+static void on_menu_cycle_model_set(GSimpleAction *action, GVariant *param,
+                                    gpointer user_data);
 
 /* Fwd: layout helpers */
 static GtkWidget *create_prompt_section(Tab *tab, AppWindow *win);
@@ -83,6 +95,8 @@ static void setup_tooltips(Tab *tab, AppWindow *win);
 static void apply_layout(Tab *tab);
 static void toggle_popout(Tab *tab);
 static void close_popups(AppWindow *win);
+static void cycle_dropdown_next(GtkWidget *dropdown);
+static void cycle_dropdown_prev(GtkWidget *dropdown);
 struct PopupEscCtx {
   gpointer data;
   void (*close_fn)(gpointer);
@@ -1626,6 +1640,26 @@ AppWindow *app_window_new(GtkApplication *app) {
   kb = runtime_config_get_string(win->config, "kb_status_bar", KB_STATUS_BAR);
   gtk_accelerator_parse(kb, &win->kb_status_bar_keyval,
                         &win->kb_status_bar_mods);
+  g_free(kb);
+  kb = runtime_config_get_string(win->config, "kb_cycle_agent_next",
+                                 KB_CYCLE_AGENT_NEXT);
+  gtk_accelerator_parse(kb, &win->kb_cycle_agent_next_keyval,
+                        &win->kb_cycle_agent_next_mods);
+  g_free(kb);
+  kb = runtime_config_get_string(win->config, "kb_cycle_model_next",
+                                 KB_CYCLE_MODEL_NEXT);
+  gtk_accelerator_parse(kb, &win->kb_cycle_model_next_keyval,
+                        &win->kb_cycle_model_next_mods);
+  g_free(kb);
+  kb = runtime_config_get_string(win->config, "kb_cycle_agent_prev",
+                                 KB_CYCLE_AGENT_PREV);
+  gtk_accelerator_parse(kb, &win->kb_cycle_agent_prev_keyval,
+                        &win->kb_cycle_agent_prev_mods);
+  g_free(kb);
+  kb = runtime_config_get_string(win->config, "kb_cycle_model_prev",
+                                 KB_CYCLE_MODEL_PREV);
+  gtk_accelerator_parse(kb, &win->kb_cycle_model_prev_keyval,
+                        &win->kb_cycle_model_prev_mods);
 
   {
     struct {
@@ -1793,6 +1827,42 @@ AppWindow *app_window_new(GtkApplication *app) {
     g_signal_connect_swapped(
         g_action_map_lookup_action(G_ACTION_MAP(actions), "copy_marked"),
         "activate", G_CALLBACK(on_copy), win);
+    g_action_map_add_action(
+        G_ACTION_MAP(actions),
+        G_ACTION(g_simple_action_new("cycle_agent_next", NULL)));
+    g_action_map_add_action(
+        G_ACTION_MAP(actions),
+        G_ACTION(g_simple_action_new("cycle_agent_prev", NULL)));
+    g_action_map_add_action(
+        G_ACTION_MAP(actions),
+        G_ACTION(g_simple_action_new("cycle_model_next", NULL)));
+    g_action_map_add_action(
+        G_ACTION_MAP(actions),
+        G_ACTION(g_simple_action_new("cycle_model_prev", NULL)));
+    g_action_map_add_action(G_ACTION_MAP(actions),
+                            G_ACTION(g_simple_action_new(
+                                "cycle_agent_set", G_VARIANT_TYPE_STRING)));
+    g_action_map_add_action(G_ACTION_MAP(actions),
+                            G_ACTION(g_simple_action_new(
+                                "cycle_model_set", G_VARIANT_TYPE_STRING)));
+    g_signal_connect_data(
+        g_action_map_lookup_action(G_ACTION_MAP(actions), "cycle_agent_next"),
+        "activate", G_CALLBACK(on_menu_cycle_agent_next), win, NULL, 0);
+    g_signal_connect_data(
+        g_action_map_lookup_action(G_ACTION_MAP(actions), "cycle_agent_prev"),
+        "activate", G_CALLBACK(on_menu_cycle_agent_prev), win, NULL, 0);
+    g_signal_connect_data(
+        g_action_map_lookup_action(G_ACTION_MAP(actions), "cycle_model_next"),
+        "activate", G_CALLBACK(on_menu_cycle_model_next), win, NULL, 0);
+    g_signal_connect_data(
+        g_action_map_lookup_action(G_ACTION_MAP(actions), "cycle_model_prev"),
+        "activate", G_CALLBACK(on_menu_cycle_model_prev), win, NULL, 0);
+    g_signal_connect_data(
+        g_action_map_lookup_action(G_ACTION_MAP(actions), "cycle_agent_set"),
+        "activate", G_CALLBACK(on_menu_cycle_agent_set), win, NULL, 0);
+    g_signal_connect_data(
+        g_action_map_lookup_action(G_ACTION_MAP(actions), "cycle_model_set"),
+        "activate", G_CALLBACK(on_menu_cycle_model_set), win, NULL, 0);
 
     bar_visible = runtime_config_get_bool(win->config, "menu_bar_visible",
                                           MENU_BAR_VISIBLE_DEFAULT);
@@ -1913,6 +1983,106 @@ AppWindow *app_window_new(GtkApplication *app) {
       if (accel != NULL && accel[0] != '\0')
         g_menu_item_set_attribute(item, "accel", "s", accel);
       g_menu_append_item(section, item);
+
+      g_menu_append_section(section, NULL, G_MENU_MODEL(g_menu_new()));
+
+      {
+        GMenu *sub;
+        GMenuItem *item;
+        const char *accel;
+
+        sub = g_menu_new();
+
+        accel = runtime_config_get_string(win->config, "kb_cycle_agent_next",
+                                          KB_CYCLE_AGENT_NEXT);
+        item = g_menu_item_new("Next Agent", "win.cycle_agent_next");
+        if (accel != NULL && accel[0] != '\0')
+          g_menu_item_set_attribute(item, "accel", "s", accel);
+        g_menu_append_item(sub, item);
+
+        accel = runtime_config_get_string(win->config, "kb_cycle_agent_prev",
+                                          KB_CYCLE_AGENT_PREV);
+        item = g_menu_item_new("Prev Agent", "win.cycle_agent_prev");
+        if (accel != NULL && accel[0] != '\0')
+          g_menu_item_set_attribute(item, "accel", "s", accel);
+        g_menu_append_item(sub, item);
+
+        g_menu_append_section(sub, NULL, G_MENU_MODEL(g_menu_new()));
+
+        {
+          GMenu *section_menu = g_menu_new();
+          char **opts;
+
+          opts = runtime_config_get_string_list(win->config, "agent_options");
+          if (opts == NULL)
+            opts = g_strsplit(DEFAULT_AGENT_OPTIONS, ",", -1);
+          for (int i = 0; opts[i] != NULL && opts[i][0] != '\0'; i++) {
+            GString *label = g_string_new(opts[i]);
+            GVariant *target = g_variant_new_string(opts[i]);
+            for (gsize j = 0; j < label->len; j++)
+              if (label->str[j] == '_')
+                g_string_insert_c(label, j++, '_');
+            item = g_menu_item_new(label->str, NULL);
+            g_menu_item_set_action_and_target_value(item, "win.cycle_agent_set",
+                                                    target);
+            g_menu_append_item(section_menu, item);
+            g_string_free(label, TRUE);
+          }
+          g_strfreev(opts);
+          g_menu_append_section(sub, "Agents", G_MENU_MODEL(section_menu));
+        }
+
+        g_menu_append_submenu(section, "Agent", G_MENU_MODEL(sub));
+      }
+
+      {
+        GMenu *sub;
+        GMenuItem *item;
+        const char *accel;
+
+        sub = g_menu_new();
+
+        accel = runtime_config_get_string(win->config, "kb_cycle_model_next",
+                                          KB_CYCLE_MODEL_NEXT);
+        item = g_menu_item_new("Next Model", "win.cycle_model_next");
+        if (accel != NULL && accel[0] != '\0')
+          g_menu_item_set_attribute(item, "accel", "s", accel);
+        g_menu_append_item(sub, item);
+
+        accel = runtime_config_get_string(win->config, "kb_cycle_model_prev",
+                                          KB_CYCLE_MODEL_PREV);
+        item = g_menu_item_new("Prev Model", "win.cycle_model_prev");
+        if (accel != NULL && accel[0] != '\0')
+          g_menu_item_set_attribute(item, "accel", "s", accel);
+        g_menu_append_item(sub, item);
+
+        g_menu_append_section(sub, NULL, G_MENU_MODEL(g_menu_new()));
+
+        {
+          GMenu *section_menu = g_menu_new();
+          char **opts;
+
+          opts = runtime_config_get_string_list(win->config, "model_options");
+          if (opts == NULL)
+            opts = g_strsplit(DEFAULT_MODEL_OPTIONS, ",", -1);
+          for (int i = 0; opts[i] != NULL && opts[i][0] != '\0'; i++) {
+            GString *label = g_string_new(opts[i]);
+            GVariant *target = g_variant_new_string(opts[i]);
+            for (gsize j = 0; j < label->len; j++)
+              if (label->str[j] == '_')
+                g_string_insert_c(label, j++, '_');
+            item = g_menu_item_new(label->str, NULL);
+            g_menu_item_set_action_and_target_value(item, "win.cycle_model_set",
+                                                    target);
+            g_menu_append_item(section_menu, item);
+            g_string_free(label, TRUE);
+          }
+          g_strfreev(opts);
+          g_menu_append_section(sub, "Models", G_MENU_MODEL(section_menu));
+        }
+
+        g_menu_append_submenu(section, "Model", G_MENU_MODEL(sub));
+      }
 
       g_menu_append_submenu(menu, "Actions", G_MENU_MODEL(section));
     }
@@ -2898,6 +3068,10 @@ static void on_shortcuts(AppWindow *win) {
         {NULL, "Toggle follow-up"},
         {NULL, "Toggle menu bar"},
         {NULL, "Toggle status bar"},
+        {NULL, "Cycle agent next"},
+        {NULL, "Cycle model next"},
+        {NULL, "Cycle agent prev"},
+        {NULL, "Cycle model prev"},
         {NULL, "Switch to tab 1-9"},
     };
 
@@ -2928,7 +3102,15 @@ static void on_shortcuts(AppWindow *win) {
         runtime_config_get_string(win->config, "kb_menu_bar", KB_MENU_BAR));
     rows[13].shortcut = accel_to_human(
         runtime_config_get_string(win->config, "kb_status_bar", KB_STATUS_BAR));
-    rows[14].shortcut = "alt+1..9";
+    rows[14].shortcut = accel_to_human(runtime_config_get_string(
+        win->config, "kb_cycle_agent_next", KB_CYCLE_AGENT_NEXT));
+    rows[15].shortcut = accel_to_human(runtime_config_get_string(
+        win->config, "kb_cycle_model_next", KB_CYCLE_MODEL_NEXT));
+    rows[16].shortcut = accel_to_human(runtime_config_get_string(
+        win->config, "kb_cycle_agent_prev", KB_CYCLE_AGENT_PREV));
+    rows[17].shortcut = accel_to_human(runtime_config_get_string(
+        win->config, "kb_cycle_model_prev", KB_CYCLE_MODEL_PREV));
+    rows[18].shortcut = "alt+1..9";
 
     for (int i = 0; i < (int)G_N_ELEMENTS(rows); i++) {
       GtkWidget *k, *d;
@@ -2943,7 +3125,7 @@ static void on_shortcuts(AppWindow *win) {
     }
 
     for (int i = 0; i < (int)G_N_ELEMENTS(rows); i++)
-      if (i != 7 && i != 14)
+      if (i != 7 && i != 18)
         g_free((char *)rows[i].shortcut);
 
     gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scroll), grid);
@@ -3054,6 +3236,76 @@ static void on_menu_toggle_status_bar(GSimpleAction *action, GVariant *state,
   visible = g_variant_get_boolean(state);
   g_simple_action_set_state(action, state);
   gtk_widget_set_visible(win->status_bar_box, visible);
+}
+
+static void on_menu_cycle_agent_next(GSimpleAction *action, GVariant *param,
+                                     gpointer user_data) {
+  AppWindow *win = user_data;
+  Tab *tab;
+
+  (void)action;
+  (void)param;
+  tab = app_window_get_active_tab(win);
+  if (tab != NULL)
+    cycle_dropdown_next(tab->agent_dropdown);
+}
+
+static void on_menu_cycle_agent_prev(GSimpleAction *action, GVariant *param,
+                                     gpointer user_data) {
+  AppWindow *win = user_data;
+  Tab *tab;
+
+  (void)action;
+  (void)param;
+  tab = app_window_get_active_tab(win);
+  if (tab != NULL)
+    cycle_dropdown_prev(tab->agent_dropdown);
+}
+
+static void on_menu_cycle_model_next(GSimpleAction *action, GVariant *param,
+                                     gpointer user_data) {
+  AppWindow *win = user_data;
+  Tab *tab;
+
+  (void)action;
+  (void)param;
+  tab = app_window_get_active_tab(win);
+  if (tab != NULL)
+    cycle_dropdown_next(tab->model_dropdown);
+}
+
+static void on_menu_cycle_model_prev(GSimpleAction *action, GVariant *param,
+                                     gpointer user_data) {
+  AppWindow *win = user_data;
+  Tab *tab;
+
+  (void)action;
+  (void)param;
+  tab = app_window_get_active_tab(win);
+  if (tab != NULL)
+    cycle_dropdown_prev(tab->model_dropdown);
+}
+
+static void on_menu_cycle_agent_set(GSimpleAction *action, GVariant *param,
+                                    gpointer user_data) {
+  AppWindow *win = user_data;
+  Tab *tab;
+
+  (void)action;
+  tab = app_window_get_active_tab(win);
+  if (tab != NULL && tab->agent_dropdown != NULL)
+    set_selected_text(tab->agent_dropdown, g_variant_get_string(param, NULL));
+}
+
+static void on_menu_cycle_model_set(GSimpleAction *action, GVariant *param,
+                                    gpointer user_data) {
+  AppWindow *win = user_data;
+  Tab *tab;
+
+  (void)action;
+  tab = app_window_get_active_tab(win);
+  if (tab != NULL && tab->model_dropdown != NULL)
+    set_selected_text(tab->model_dropdown, g_variant_get_string(param, NULL));
 }
 
 static void on_about(AppWindow *win) {
@@ -3274,6 +3526,32 @@ static gboolean on_window_key_pressed(GtkEventControllerKey *controller,
     return GDK_EVENT_STOP;
   }
 
+  /* alt+a / alt+m: cycle agent/model dropdown (forward, wraps) */
+  if (tab != NULL && win->kb_cycle_agent_next_keyval != 0 &&
+      keyval == win->kb_cycle_agent_next_keyval &&
+      mods == win->kb_cycle_agent_next_mods) {
+    cycle_dropdown_next(tab->agent_dropdown);
+    return GDK_EVENT_STOP;
+  }
+  if (tab != NULL && win->kb_cycle_model_next_keyval != 0 &&
+      keyval == win->kb_cycle_model_next_keyval &&
+      mods == win->kb_cycle_model_next_mods) {
+    cycle_dropdown_next(tab->model_dropdown);
+    return GDK_EVENT_STOP;
+  }
+  if (tab != NULL && win->kb_cycle_agent_prev_keyval != 0 &&
+      keyval == win->kb_cycle_agent_prev_keyval &&
+      mods == win->kb_cycle_agent_prev_mods) {
+    cycle_dropdown_prev(tab->agent_dropdown);
+    return GDK_EVENT_STOP;
+  }
+  if (tab != NULL && win->kb_cycle_model_prev_keyval != 0 &&
+      keyval == win->kb_cycle_model_prev_keyval &&
+      mods == win->kb_cycle_model_prev_mods) {
+    cycle_dropdown_prev(tab->model_dropdown);
+    return GDK_EVENT_STOP;
+  }
+
   /* alt+1..9: switch to tab */
   if (keyval >= GDK_KEY_1 && keyval <= GDK_KEY_9 && mods == GDK_ALT_MASK) {
     int idx;
@@ -3455,6 +3733,48 @@ static void on_prompt_focus_changed(GObject *object, GParamSpec *pspec,
     return;
 
   on_tab_rename_cancel(entry, win);
+}
+
+static void cycle_dropdown_next(GtkWidget *dropdown) {
+  GListModel *model;
+  guint n, sel;
+
+  if (!GTK_IS_DROP_DOWN(dropdown))
+    return;
+
+  model = gtk_drop_down_get_model(GTK_DROP_DOWN(dropdown));
+  n = g_list_model_get_n_items(model);
+  if (n == 0)
+    return;
+
+  sel = gtk_drop_down_get_selected(GTK_DROP_DOWN(dropdown));
+  if (sel == GTK_INVALID_LIST_POSITION)
+    sel = 0;
+  else
+    sel = (sel + 1) % n;
+
+  gtk_drop_down_set_selected(GTK_DROP_DOWN(dropdown), sel);
+}
+
+static void cycle_dropdown_prev(GtkWidget *dropdown) {
+  GListModel *model;
+  guint n, sel;
+
+  if (!GTK_IS_DROP_DOWN(dropdown))
+    return;
+
+  model = gtk_drop_down_get_model(GTK_DROP_DOWN(dropdown));
+  n = g_list_model_get_n_items(model);
+  if (n == 0)
+    return;
+
+  sel = gtk_drop_down_get_selected(GTK_DROP_DOWN(dropdown));
+  if (sel == GTK_INVALID_LIST_POSITION)
+    sel = 0;
+  else
+    sel = (sel + n - 1) % n;
+
+  gtk_drop_down_set_selected(GTK_DROP_DOWN(dropdown), sel);
 }
 
 static void set_prompt_focused(Tab *tab) {

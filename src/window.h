@@ -63,6 +63,14 @@ typedef struct _AppWindow {
   GdkModifierType kb_menu_bar_mods;
   guint kb_status_bar_keyval;
   GdkModifierType kb_status_bar_mods;
+  guint kb_cycle_agent_next_keyval;
+  GdkModifierType kb_cycle_agent_next_mods;
+  guint kb_cycle_model_next_keyval;
+  GdkModifierType kb_cycle_model_next_mods;
+  guint kb_cycle_agent_prev_keyval;
+  GdkModifierType kb_cycle_agent_prev_mods;
+  guint kb_cycle_model_prev_keyval;
+  GdkModifierType kb_cycle_model_prev_mods;
 } AppWindow;
 
 AppWindow *app_window_new(GtkApplication *app);
