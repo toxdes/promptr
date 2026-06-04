@@ -98,7 +98,55 @@ static void close_popups(AppWindow *win);
 static void cycle_dropdown_next(GtkWidget *dropdown);
 static void cycle_dropdown_prev(GtkWidget *dropdown);
 static void update_window_title(AppWindow *win, const char *tab_name);
-static void on_dropdown_map(GtkWidget *widget, gpointer data);
+static void add_dropdown_hover(GtkWidget *dropdown, AppWindow *win);
+
+static void dropdown_trunc_factory_setup(GtkSignalListItemFactory *factory,
+                                         GtkListItem *item, gpointer data) {
+  GtkWidget *label;
+
+  (void)factory;
+  (void)data;
+  label = gtk_label_new(NULL);
+  gtk_label_set_xalign(GTK_LABEL(label), 0.0f);
+  gtk_label_set_ellipsize(GTK_LABEL(label), PANGO_ELLIPSIZE_MIDDLE);
+  gtk_label_set_width_chars(GTK_LABEL(label), 25);
+  gtk_list_item_set_child(item, label);
+}
+
+static void dropdown_trunc_factory_bind(GtkSignalListItemFactory *factory,
+                                        GtkListItem *item, gpointer data) {
+  GtkWidget *label;
+  GtkStringObject *obj;
+
+  (void)factory;
+  (void)data;
+  label = gtk_list_item_get_child(item);
+  obj = GTK_STRING_OBJECT(gtk_list_item_get_item(item));
+  gtk_label_set_text(GTK_LABEL(label), gtk_string_object_get_string(obj));
+}
+
+static void dropdown_full_factory_setup(GtkSignalListItemFactory *factory,
+                                        GtkListItem *item, gpointer data) {
+  GtkWidget *label;
+
+  (void)factory;
+  (void)data;
+  label = gtk_label_new(NULL);
+  gtk_label_set_xalign(GTK_LABEL(label), 0.0f);
+  gtk_list_item_set_child(item, label);
+}
+
+static void dropdown_full_factory_bind(GtkSignalListItemFactory *factory,
+                                       GtkListItem *item, gpointer data) {
+  GtkWidget *label;
+  GtkStringObject *obj;
+
+  (void)factory;
+  (void)data;
+  label = gtk_list_item_get_child(item);
+  obj = GTK_STRING_OBJECT(gtk_list_item_get_item(item));
+  gtk_label_set_text(GTK_LABEL(label), gtk_string_object_get_string(obj));
+}
 struct PopupEscCtx {
   gpointer data;
   void (*close_fn)(gpointer);
@@ -293,8 +341,21 @@ static GtkWidget *create_agent_row(Tab *tab, AppWindow *win) {
   tab->agent_dropdown = gtk_drop_down_new(G_LIST_MODEL(list), NULL);
   gtk_drop_down_set_selected(GTK_DROP_DOWN(tab->agent_dropdown), 0);
   gtk_widget_set_sensitive(tab->agent_dropdown, has_options);
-  g_signal_connect(tab->agent_dropdown, "map", G_CALLBACK(on_dropdown_map),
-                   NULL);
+  gtk_widget_set_hexpand(tab->agent_dropdown, FALSE);
+  {
+    GtkListItemFactory *f;
+
+    f = gtk_signal_list_item_factory_new();
+    g_signal_connect(f, "setup", G_CALLBACK(dropdown_trunc_factory_setup),
+                     NULL);
+    g_signal_connect(f, "bind", G_CALLBACK(dropdown_trunc_factory_bind), NULL);
+    gtk_drop_down_set_factory(GTK_DROP_DOWN(tab->agent_dropdown), f);
+
+    f = gtk_signal_list_item_factory_new();
+    g_signal_connect(f, "setup", G_CALLBACK(dropdown_full_factory_setup), NULL);
+    g_signal_connect(f, "bind", G_CALLBACK(dropdown_full_factory_bind), NULL);
+    gtk_drop_down_set_list_factory(GTK_DROP_DOWN(tab->agent_dropdown), f);
+  }
   g_signal_connect(tab->agent_dropdown, "notify::selected",
                    G_CALLBACK(on_dropdown_changed), tab);
   gtk_box_append(GTK_BOX(row), tab->agent_dropdown);
@@ -318,8 +379,21 @@ static GtkWidget *create_agent_row(Tab *tab, AppWindow *win) {
   tab->model_dropdown = gtk_drop_down_new(G_LIST_MODEL(list), NULL);
   gtk_drop_down_set_selected(GTK_DROP_DOWN(tab->model_dropdown), 0);
   gtk_widget_set_sensitive(tab->model_dropdown, has_options);
-  g_signal_connect(tab->model_dropdown, "map", G_CALLBACK(on_dropdown_map),
-                   NULL);
+  gtk_widget_set_hexpand(tab->model_dropdown, FALSE);
+  {
+    GtkListItemFactory *f;
+
+    f = gtk_signal_list_item_factory_new();
+    g_signal_connect(f, "setup", G_CALLBACK(dropdown_trunc_factory_setup),
+                     NULL);
+    g_signal_connect(f, "bind", G_CALLBACK(dropdown_trunc_factory_bind), NULL);
+    gtk_drop_down_set_factory(GTK_DROP_DOWN(tab->model_dropdown), f);
+
+    f = gtk_signal_list_item_factory_new();
+    g_signal_connect(f, "setup", G_CALLBACK(dropdown_full_factory_setup), NULL);
+    g_signal_connect(f, "bind", G_CALLBACK(dropdown_full_factory_bind), NULL);
+    gtk_drop_down_set_list_factory(GTK_DROP_DOWN(tab->model_dropdown), f);
+  }
   g_signal_connect(tab->model_dropdown, "notify::selected",
                    G_CALLBACK(on_dropdown_changed), tab);
   gtk_box_append(GTK_BOX(row), tab->model_dropdown);
@@ -1379,6 +1453,8 @@ static void setup_tooltips(Tab *tab, AppWindow *win) {
   status_bar_on_hover(
       tab->output_view, win,
       "Click gutter to mark lines.  Ctrl+Shift+C to copy marked lines.");
+  add_dropdown_hover(tab->agent_dropdown, win);
+  add_dropdown_hover(tab->model_dropdown, win);
 }
 
 static void _box_remove_all(GtkBox *box) {
@@ -3678,6 +3754,11 @@ struct HoverCtx {
   char *text;
 };
 
+struct DropdownHoverCtx {
+  AppWindow *win;
+  GtkWidget *dropdown;
+};
+
 static void hover_enter_cb(GtkEventControllerMotion *ctrl, double x, double y,
                            gpointer data) {
   struct HoverCtx *ctx = data;
@@ -3698,6 +3779,39 @@ static void hover_ctx_free(gpointer data, GClosure *closure) {
   (void)closure;
   g_free(ctx->text);
   g_free(ctx);
+}
+
+static void dropdown_hover_enter(GtkEventControllerMotion *ctrl, double x,
+                                 double y, gpointer data) {
+  struct DropdownHoverCtx *ctx = data;
+  g_autofree char *text = get_selected_text(ctx->dropdown);
+
+  (void)ctrl;
+  (void)x;
+  (void)y;
+  if (text != NULL)
+    gtk_label_set_text(GTK_LABEL(ctx->win->status_bar), text);
+}
+
+static void dropdown_hover_ctx_free(gpointer data, GClosure *closure) {
+  (void)closure;
+  g_free(data);
+}
+
+static void add_dropdown_hover(GtkWidget *dropdown, AppWindow *win) {
+  GtkEventController *motion;
+  struct DropdownHoverCtx *ctx;
+
+  ctx = g_new(struct DropdownHoverCtx, 1);
+  ctx->win = win;
+  ctx->dropdown = dropdown;
+
+  motion = gtk_event_controller_motion_new();
+  g_signal_connect_data(motion, "enter", G_CALLBACK(dropdown_hover_enter), ctx,
+                        (GClosureNotify)dropdown_hover_ctx_free, 0);
+  g_signal_connect_data(motion, "leave", G_CALLBACK(hover_leave_cb), win, NULL,
+                        0);
+  gtk_widget_add_controller(dropdown, motion);
 }
 
 static void status_bar_on_hover(GtkWidget *widget, AppWindow *win,
@@ -3787,24 +3901,6 @@ static void update_window_title(AppWindow *win, const char *tab_name) {
   g_autofree char *title =
       g_strdup_printf("%s - Promptr", tab_name != NULL ? tab_name : "New Tab");
   gtk_window_set_title(GTK_WINDOW(win->window), title);
-}
-
-static void on_dropdown_map(GtkWidget *widget, gpointer data) {
-  GtkWidget *button, *box, *label;
-
-  (void)data;
-  button = gtk_widget_get_first_child(widget);
-  if (button == NULL)
-    return;
-  box = gtk_widget_get_first_child(button);
-  if (box == NULL)
-    return;
-  label = gtk_widget_get_first_child(box);
-  if (label == NULL || !GTK_IS_LABEL(label))
-    return;
-
-  gtk_label_set_ellipsize(GTK_LABEL(label), PANGO_ELLIPSIZE_MIDDLE);
-  gtk_label_set_max_width_chars(GTK_LABEL(label), 25);
 }
 
 static void set_prompt_focused(Tab *tab) {
