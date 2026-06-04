@@ -97,6 +97,8 @@ static void toggle_popout(Tab *tab);
 static void close_popups(AppWindow *win);
 static void cycle_dropdown_next(GtkWidget *dropdown);
 static void cycle_dropdown_prev(GtkWidget *dropdown);
+static void update_window_title(AppWindow *win, const char *tab_name);
+static void on_dropdown_map(GtkWidget *widget, gpointer data);
 struct PopupEscCtx {
   gpointer data;
   void (*close_fn)(gpointer);
@@ -291,6 +293,8 @@ static GtkWidget *create_agent_row(Tab *tab, AppWindow *win) {
   tab->agent_dropdown = gtk_drop_down_new(G_LIST_MODEL(list), NULL);
   gtk_drop_down_set_selected(GTK_DROP_DOWN(tab->agent_dropdown), 0);
   gtk_widget_set_sensitive(tab->agent_dropdown, has_options);
+  g_signal_connect(tab->agent_dropdown, "map", G_CALLBACK(on_dropdown_map),
+                   NULL);
   g_signal_connect(tab->agent_dropdown, "notify::selected",
                    G_CALLBACK(on_dropdown_changed), tab);
   gtk_box_append(GTK_BOX(row), tab->agent_dropdown);
@@ -314,6 +318,8 @@ static GtkWidget *create_agent_row(Tab *tab, AppWindow *win) {
   tab->model_dropdown = gtk_drop_down_new(G_LIST_MODEL(list), NULL);
   gtk_drop_down_set_selected(GTK_DROP_DOWN(tab->model_dropdown), 0);
   gtk_widget_set_sensitive(tab->model_dropdown, has_options);
+  g_signal_connect(tab->model_dropdown, "map", G_CALLBACK(on_dropdown_map),
+                   NULL);
   g_signal_connect(tab->model_dropdown, "notify::selected",
                    G_CALLBACK(on_dropdown_changed), tab);
   gtk_box_append(GTK_BOX(row), tab->model_dropdown);
@@ -808,7 +814,7 @@ static void on_tab_rename_activate(GtkEntry *entry, AppWindow *win) {
         set_prompt_focused(tab);
       }
     }
-    gtk_window_set_title(GTK_WINDOW(win->window), tab->name);
+    update_window_title(win, tab->name);
   }
 }
 
@@ -942,7 +948,7 @@ static void on_notebook_page_switched(GtkNotebook *notebook, GtkWidget *page,
       tab_update_status_dot(tab);
       apply_layout(tab);
       set_prompt_focused(tab);
-      gtk_window_set_title(GTK_WINDOW(win->window), tab->name);
+      update_window_title(win, tab->name);
     }
   }
 }
@@ -1710,7 +1716,7 @@ AppWindow *app_window_new(GtkApplication *app) {
     settings = gtk_widget_get_settings(win->window);
     g_object_set(settings, "gtk-cursor-aspect-ratio", 0.08, NULL);
   }
-  gtk_window_set_title(GTK_WINDOW(win->window), "Promptr");
+  update_window_title(win, "New Tab");
   gtk_window_set_default_size(
       GTK_WINDOW(win->window),
       runtime_config_get_int(win->config, "width", DEFAULT_WIDTH),
@@ -3775,6 +3781,30 @@ static void cycle_dropdown_prev(GtkWidget *dropdown) {
     sel = (sel + n - 1) % n;
 
   gtk_drop_down_set_selected(GTK_DROP_DOWN(dropdown), sel);
+}
+
+static void update_window_title(AppWindow *win, const char *tab_name) {
+  g_autofree char *title =
+      g_strdup_printf("%s - Promptr", tab_name != NULL ? tab_name : "New Tab");
+  gtk_window_set_title(GTK_WINDOW(win->window), title);
+}
+
+static void on_dropdown_map(GtkWidget *widget, gpointer data) {
+  GtkWidget *button, *box, *label;
+
+  (void)data;
+  button = gtk_widget_get_first_child(widget);
+  if (button == NULL)
+    return;
+  box = gtk_widget_get_first_child(button);
+  if (box == NULL)
+    return;
+  label = gtk_widget_get_first_child(box);
+  if (label == NULL || !GTK_IS_LABEL(label))
+    return;
+
+  gtk_label_set_ellipsize(GTK_LABEL(label), PANGO_ELLIPSIZE_MIDDLE);
+  gtk_label_set_max_width_chars(GTK_LABEL(label), 25);
 }
 
 static void set_prompt_focused(Tab *tab) {
