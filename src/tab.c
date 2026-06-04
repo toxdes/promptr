@@ -129,8 +129,10 @@ void tab_save(Tab *tab) {
   {
     char *agent, *model;
 
-    agent = get_selected_text(tab->agent_dropdown);
-    model = get_selected_text(tab->model_dropdown);
+    agent = tab->agent_dropdown != NULL ? get_selected_text(tab->agent_dropdown)
+                                        : NULL;
+    model = tab->model_dropdown != NULL ? get_selected_text(tab->model_dropdown)
+                                        : NULL;
     if (agent != NULL)
       g_key_file_set_string(kf, "tab", "agent", agent);
     if (model != NULL)

@@ -1126,8 +1126,10 @@ static gboolean on_tab_drop(GtkDropTarget *drop, const GValue *value, double x,
 
   apage = gtk_notebook_get_nth_page(nb, src_idx);
   alabel = gtk_notebook_get_tab_label(nb, apage);
-  g_object_ref(apage);
-  g_object_ref(alabel);
+  if (apage != NULL)
+    g_object_ref(apage);
+  if (alabel != NULL)
+    g_object_ref(alabel);
 
   gtk_notebook_remove_page(nb, src_idx);
 
@@ -1508,7 +1510,7 @@ AppWindow *app_window_new(GtkApplication *app) {
   GtkWidget *main_box;
   GtkWidget *status_bar_widget;
   Tab *tab;
-  g_autofree char *kb;
+  g_autofree char *kb = NULL;
 
   win = g_new0(AppWindow, 1);
 
@@ -1558,40 +1560,56 @@ AppWindow *app_window_new(GtkApplication *app) {
     load_css(prompt_fs, output_fs);
   }
 
+  g_free(kb);
   kb = runtime_config_get_string(win->config, "kb_focus_prompt",
                                  KB_FOCUS_PROMPT);
   gtk_accelerator_parse(kb, &win->kb_focus_keyval, &win->kb_focus_mods);
+  g_free(kb);
   kb = runtime_config_get_string(win->config, "kb_copy_marked", KB_COPY_MARKED);
   gtk_accelerator_parse(kb, &win->kb_copy_keyval, &win->kb_copy_mods);
+  g_free(kb);
   kb = runtime_config_get_string(win->config, "kb_close", KB_CLOSE);
   gtk_accelerator_parse(kb, &win->kb_close_keyval, &win->kb_close_mods);
+  g_free(kb);
   kb = runtime_config_get_string(win->config, "kb_quit", KB_QUIT);
   gtk_accelerator_parse(kb, &win->kb_quit_keyval, &win->kb_quit_mods);
+  g_free(kb);
   kb = runtime_config_get_string(win->config, "kb_shortcuts", KB_SHORTCUTS);
   gtk_accelerator_parse(kb, &win->kb_shortcuts_keyval, &win->kb_shortcuts_mods);
+  g_free(kb);
   kb = runtime_config_get_string(win->config, "kb_log", KB_LOG);
   gtk_accelerator_parse(kb, &win->kb_log_keyval, &win->kb_log_mods);
+  g_free(kb);
   kb = runtime_config_get_string(win->config, "kb_submit", KB_SUBMIT);
   gtk_accelerator_parse(kb, &win->kb_submit_keyval, &win->kb_submit_mods);
+  g_free(kb);
   kb = runtime_config_get_string(win->config, "kb_cancel", KB_CANCEL);
   gtk_accelerator_parse(kb, &win->kb_cancel_keyval, &win->kb_cancel_mods);
+  g_free(kb);
   kb = runtime_config_get_string(win->config, "kb_layout", KB_LAYOUT);
   gtk_accelerator_parse(kb, &win->kb_layout_keyval, &win->kb_layout_mods);
+  g_free(kb);
   kb = runtime_config_get_string(win->config, "kb_popout", KB_POPOUT);
   gtk_accelerator_parse(kb, &win->kb_popout_keyval, &win->kb_popout_mods);
+  g_free(kb);
   kb = runtime_config_get_string(win->config, "kb_new_tab", KB_NEW_TAB);
   gtk_accelerator_parse(kb, &win->kb_new_tab_keyval, &win->kb_new_tab_mods);
+  g_free(kb);
   kb = runtime_config_get_string(win->config, "kb_close_tab", KB_CLOSE_TAB);
   gtk_accelerator_parse(kb, &win->kb_close_tab_keyval, &win->kb_close_tab_mods);
+  g_free(kb);
   kb = runtime_config_get_string(win->config, "kb_restore_tab", KB_RESTORE_TAB);
   gtk_accelerator_parse(kb, &win->kb_restore_tab_keyval,
                         &win->kb_restore_tab_mods);
+  g_free(kb);
   kb = runtime_config_get_string(win->config, "kb_follow_up_toggle",
                                  KB_FOLLOW_UP_TOGGLE);
   gtk_accelerator_parse(kb, &win->kb_follow_up_toggle_keyval,
                         &win->kb_follow_up_toggle_mods);
+  g_free(kb);
   kb = runtime_config_get_string(win->config, "kb_menu_bar", KB_MENU_BAR);
   gtk_accelerator_parse(kb, &win->kb_menu_bar_keyval, &win->kb_menu_bar_mods);
+  g_free(kb);
   kb = runtime_config_get_string(win->config, "kb_status_bar", KB_STATUS_BAR);
   gtk_accelerator_parse(kb, &win->kb_status_bar_keyval,
                         &win->kb_status_bar_mods);
@@ -2465,6 +2483,9 @@ static void on_submit(AppWindow *win) {
   command_execute(tab, model, agent, query, tmpdir, win->opencode_bin,
                   is_follow_up, command_finished_cb);
 
+  /* cmd_display may have been freed by command_finished_cb if
+     command_execute failed synchronously — re-read from tab. */
+  cmd_display = tab->cmd_string;
   if (tab->subprocess != NULL)
     set_loading_state(tab, cmd_display);
 
@@ -3390,7 +3411,8 @@ static void status_bar_on_hover(GtkWidget *widget, AppWindow *win,
   motion = gtk_event_controller_motion_new();
   g_signal_connect_data(motion, "enter", G_CALLBACK(hover_enter_cb), ctx,
                         (GClosureNotify)hover_ctx_free, 0);
-  g_signal_connect(motion, "leave", G_CALLBACK(hover_leave_cb), win);
+  g_signal_connect_data(motion, "leave", G_CALLBACK(hover_leave_cb), win, NULL,
+                        0);
 
   gtk_widget_add_controller(widget, motion);
 }
@@ -3603,7 +3625,8 @@ static void on_gutter_click(GtkGestureClick *gesture, int n_press, double x,
   (void)n_press;
 
   tab = app_window_get_active_tab(win);
-  if (tab == NULL)
+  if (tab == NULL || tab->output_view == NULL ||
+      !GTK_IS_TEXT_VIEW(tab->output_view))
     return;
 
   gtk_text_view_window_to_buffer_coords(GTK_TEXT_VIEW(tab->output_view),
@@ -3625,6 +3648,10 @@ static void update_marked_label(Tab *tab) {
   GtkTextIter iter;
   GString *label;
   int line, marked, total;
+
+  if (tab == NULL || tab->output_view == NULL ||
+      !GTK_IS_TEXT_VIEW(tab->output_view))
+    return;
 
   buf = gtk_text_view_get_buffer(GTK_TEXT_VIEW(tab->output_view));
   total = gtk_text_buffer_get_line_count(buf);
