@@ -87,7 +87,8 @@ void command_cancel(Tab *tab) {
   if (tab->cancellable != NULL)
     g_cancellable_cancel(tab->cancellable);
 
-  kill(-pid, SIGKILL);
+  if (pid > 0)
+    kill(-pid, SIGKILL);
 }
 
 /* ── internal ──────────────────────────────────────────────────── */
