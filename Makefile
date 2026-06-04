@@ -18,7 +18,7 @@ ifeq ($(BUILD),debug)
   DEBUG_FLAGS  := -DDEBUG_BUILD
   VER_SUFFIX := -debug
 else
-  OPT_FLAGS  := -O2
+  OPT_FLAGS  := -O3
   WARN_FLAGS := -Wall -Wextra -Werror -pedantic
   APP_ID     := com.toxdes.promptr
   DEBUG_FLAGS  :=

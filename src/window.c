@@ -252,7 +252,7 @@ static GtkWidget *create_follow_up_row(Tab *tab, AppWindow *win) {
 static GtkWidget *create_agent_row(Tab *tab, AppWindow *win) {
   GtkWidget *row, *label, *filler;
   GtkStringList *list;
-  g_autofree char **opts = NULL;
+  char **opts = NULL;
   int i;
   gboolean has_options;
 
@@ -304,6 +304,7 @@ static GtkWidget *create_agent_row(Tab *tab, AppWindow *win) {
                    G_CALLBACK(on_dropdown_changed), tab);
   gtk_box_append(GTK_BOX(row), tab->model_dropdown);
   g_strfreev(opts);
+  opts = NULL;
 
   tab->submit_btn = gtk_button_new_with_label("Submit");
   gtk_widget_set_margin_start(tab->submit_btn, 8);
@@ -1959,16 +1960,6 @@ AppWindow *app_window_new(GtkApplication *app) {
     gtk_box_prepend(GTK_BOX(main_box), win->menu_bar);
   }
 
-  win->cmd_label = gtk_text_view_new();
-  gtk_text_view_set_editable(GTK_TEXT_VIEW(win->cmd_label), FALSE);
-  gtk_text_view_set_cursor_visible(GTK_TEXT_VIEW(win->cmd_label), FALSE);
-  gtk_text_view_set_wrap_mode(GTK_TEXT_VIEW(win->cmd_label),
-                              GTK_WRAP_WORD_CHAR);
-  gtk_text_view_set_left_margin(GTK_TEXT_VIEW(win->cmd_label), 10);
-  gtk_text_view_set_top_margin(GTK_TEXT_VIEW(win->cmd_label), 4);
-  gtk_widget_set_hexpand(win->cmd_label, TRUE);
-  gtk_widget_add_css_class(win->cmd_label, "monospace");
-
   log_append(win, "session \xe2\x86\x92 started");
 
   status_bar_widget = create_status_bar(win);
@@ -2744,8 +2735,17 @@ static void on_log(AppWindow *win) {
     gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scroll),
                                    GTK_POLICY_AUTOMATIC, GTK_POLICY_AUTOMATIC);
     gtk_widget_set_vexpand(scroll, TRUE);
-    if (win->cmd_label == NULL)
+    if (win->cmd_label == NULL) {
       win->cmd_label = gtk_text_view_new();
+      gtk_text_view_set_editable(GTK_TEXT_VIEW(win->cmd_label), FALSE);
+      gtk_text_view_set_cursor_visible(GTK_TEXT_VIEW(win->cmd_label), FALSE);
+      gtk_text_view_set_wrap_mode(GTK_TEXT_VIEW(win->cmd_label),
+                                  GTK_WRAP_WORD_CHAR);
+      gtk_text_view_set_left_margin(GTK_TEXT_VIEW(win->cmd_label), 10);
+      gtk_text_view_set_top_margin(GTK_TEXT_VIEW(win->cmd_label), 4);
+      gtk_widget_set_hexpand(win->cmd_label, TRUE);
+      gtk_widget_add_css_class(win->cmd_label, "monospace");
+    }
     gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scroll), win->cmd_label);
     gtk_box_append(GTK_BOX(box), scroll);
 
@@ -3490,8 +3490,6 @@ static GtkWidget *cell_box(GtkWidget *child, const char *row_class,
 }
 
 static void log_append(AppWindow *win, const char *fmt, ...) {
-  GtkTextBuffer *buf;
-  GtkTextIter end;
   GString *line;
   char timestr[64];
   time_t now;
@@ -3511,13 +3509,17 @@ static void log_append(AppWindow *win, const char *fmt, ...) {
   g_string_append(line, msg);
   g_string_append_c(line, '\n');
 
-  buf = gtk_text_view_get_buffer(GTK_TEXT_VIEW(win->cmd_label));
-  gtk_text_buffer_get_end_iter(buf, &end);
-  gtk_text_buffer_insert(buf, &end, line->str, -1);
+  if (win->cmd_label != NULL && GTK_IS_TEXT_VIEW(win->cmd_label)) {
+    GtkTextBuffer *buf;
+    GtkTextIter end;
 
-  gtk_text_view_scroll_to_mark(GTK_TEXT_VIEW(win->cmd_label),
-                               gtk_text_buffer_get_insert(buf), 0.0, FALSE, 0.0,
-                               0.0);
+    buf = gtk_text_view_get_buffer(GTK_TEXT_VIEW(win->cmd_label));
+    gtk_text_buffer_get_end_iter(buf, &end);
+    gtk_text_buffer_insert(buf, &end, line->str, -1);
+    gtk_text_view_scroll_to_mark(GTK_TEXT_VIEW(win->cmd_label),
+                                 gtk_text_buffer_get_insert(buf), 0.0, FALSE,
+                                 0.0, 0.0);
+  }
 
   if (win->log_file != NULL) {
     fputs(line->str, win->log_file);
