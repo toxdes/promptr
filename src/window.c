@@ -1449,6 +1449,7 @@ static void toggle_popout(Tab *tab) {
     gtk_window_set_title(GTK_WINDOW(popup), "Promptr — Output");
     gtk_window_set_transient_for(GTK_WINDOW(popup), GTK_WINDOW(win->window));
     gtk_window_set_destroy_with_parent(GTK_WINDOW(popup), TRUE);
+    gtk_window_set_hide_on_close(GTK_WINDOW(popup), TRUE);
     gtk_window_set_default_size(GTK_WINDOW(popup), 700, 400);
 
     ctx = g_new(struct PopupEscCtx, 1);
@@ -2642,6 +2643,7 @@ static void close_popups(AppWindow *win) {
   if (win->log_popup != NULL) {
     gtk_window_destroy(GTK_WINDOW(win->log_popup));
     win->log_popup = NULL;
+    win->cmd_label = NULL; /* child of the destroyed popup */
   }
 }
 
@@ -2716,6 +2718,8 @@ static void on_log(AppWindow *win) {
     gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scroll),
                                    GTK_POLICY_AUTOMATIC, GTK_POLICY_AUTOMATIC);
     gtk_widget_set_vexpand(scroll, TRUE);
+    if (win->cmd_label == NULL)
+      win->cmd_label = gtk_text_view_new();
     gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scroll), win->cmd_label);
     gtk_box_append(GTK_BOX(box), scroll);
 
