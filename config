@@ -97,3 +97,15 @@ kb_status_bar=<Control>j
 
 # Show status bar at startup (0 or 1)
 status_bar_visible=1
+
+# Cycle agent next
+kb_cycle_agent_next=<Alt>a
+
+# Cycle model next
+kb_cycle_model_next=<Alt>m
+
+# Cycle agent prev
+kb_cycle_agent_prev=<Alt><Shift>a
+
+# Cycle model prev
+kb_cycle_model_prev=<Alt><Shift>m

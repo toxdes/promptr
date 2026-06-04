@@ -85,6 +85,10 @@ static const ConfigDefault CONFIG_DEFAULTS[] = {
     {"kb_status_bar", KB_STATUS_BAR, "# Toggle status bar visibility"},
     {"status_bar_visible", G_STRINGIFY(STATUS_BAR_VISIBLE_DEFAULT),
      "# Show status bar at startup (0 or 1)"},
+    {"kb_cycle_agent_next", KB_CYCLE_AGENT_NEXT, "# Cycle agent next"},
+    {"kb_cycle_model_next", KB_CYCLE_MODEL_NEXT, "# Cycle model next"},
+    {"kb_cycle_agent_prev", KB_CYCLE_AGENT_PREV, "# Cycle agent prev"},
+    {"kb_cycle_model_prev", KB_CYCLE_MODEL_PREV, "# Cycle model prev"},
     {NULL, NULL, NULL}};
 
 static void migrate_config(const char *path, GKeyFile *kf) {

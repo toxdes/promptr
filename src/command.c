@@ -1,4 +1,5 @@
 #include "command.h"
+#include "config.h"
 #include "window.h"
 #include <signal.h>
 #include <stdlib.h>
@@ -48,12 +49,26 @@ void command_execute(Tab *tab, const char *model, const char *agent,
   g_strfreev(argv);
 
   if (proc == NULL) {
-    char *errmsg;
+    g_autofree char *errmsg = NULL;
+    g_autofree char *stripped = NULL;
+    g_autofree char *cfg_path = NULL;
 
-    errmsg = g_strdup_printf("Failed to spawn: %s", error->message);
+    cfg_path = g_build_filename(g_get_user_config_dir(), DATA_DIR_SUFFIX,
+                                "config", NULL);
+    stripped = g_strdup(error->message);
+    g_strstrip(stripped);
+
+    errmsg = g_strdup_printf(
+        "Could not run opencode\n"
+        "\n"
+        "Binary path: %s (loaded from config at: %s)\n"
+        "Error: %s\n"
+        "\n"
+        "Install opencode from: https://opencode.ai/docs#install\n"
+        "You may need to update `opencode_path` in your config (%s).\n",
+        opencode_bin, cfg_path, stripped, cfg_path);
     if (callback != NULL)
       callback(tab, NULL, errmsg, 0, -1, TRUE);
-    g_free(errmsg);
     g_error_free(error);
     return;
   }

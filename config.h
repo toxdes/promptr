@@ -48,6 +48,12 @@
 #define KB_STATUS_BAR                    "<Control>j"
 #define STATUS_BAR_VISIBLE_DEFAULT       1
 
+/* Cycle agent/model dropdown (next/prev, wraps around) */
+#define KB_CYCLE_AGENT_NEXT              "<Alt>a"
+#define KB_CYCLE_MODEL_NEXT              "<Alt>m"
+#define KB_CYCLE_AGENT_PREV              "<Alt><Shift>a"
+#define KB_CYCLE_MODEL_PREV              "<Alt><Shift>m"
+
 /* Layer-shell overlay on wlroots compositors (0 or 1) */
 #define LAYER_SHELL_ENABLED              0
 
