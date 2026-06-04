@@ -985,6 +985,15 @@ static void close_tab(AppWindow *win, int idx) {
       t->is_open = FALSE;
       tab_save(t);
     }
+
+    /* Cancel running subprocess before removing the page (prevents
+       callback from accessing destroyed output_view / widgets). */
+    if (t != NULL && t->subprocess != NULL)
+      command_cancel(t);
+    /* Dock popped output before closing — the popout depends on
+       the tab's widgets which are about to be destroyed. */
+    if (t != NULL && t->output_popped)
+      toggle_popout(t);
   }
 
   gtk_notebook_remove_page(GTK_NOTEBOOK(win->tab_bar), idx);
