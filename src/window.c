@@ -1435,6 +1435,12 @@ static void apply_layout(Tab *tab) {
   }
 }
 
+static gboolean on_popout_close_request(GtkWindow *window, Tab *tab) {
+  (void)window;
+  toggle_popout(tab);
+  return TRUE;
+}
+
 static void toggle_popout(Tab *tab) {
   AppWindow *win = tab->win;
 
@@ -1462,6 +1468,8 @@ static void toggle_popout(Tab *tab) {
     gtk_widget_add_controller(popup, pctrl);
     g_signal_connect_data(pctrl, "key-pressed", G_CALLBACK(on_popup_esc), ctx,
                           (GClosureNotify)esc_ctx_free, 0);
+    g_signal_connect(popup, "close-request",
+                     G_CALLBACK(on_popout_close_request), tab);
 
     popup_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4);
     gtk_widget_set_margin_start(popup_box, 12);
