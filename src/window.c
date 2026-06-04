@@ -345,7 +345,7 @@ static GtkWidget *create_agent_row(Tab *tab, AppWindow *win) {
 
 static GtkWidget *create_output_section(Tab *tab, AppWindow *win) {
   GtkWidget *box, *scroll, *popout_btn;
-  GdkRGBA c;
+  GdkRGBA c = {0};
   g_autofree char *color;
 
   box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
@@ -984,6 +984,9 @@ static void close_tab(AppWindow *win, int idx) {
     if (t != NULL && t->has_activity) {
       t->is_open = FALSE;
       tab_save(t);
+    } else if (t != NULL && t->id != NULL) {
+      /* Inactive tab — delete any .conf from a previous session. */
+      tab_delete_saved(t->id);
     }
 
     /* Cancel running subprocess before removing the page (prevents
@@ -2659,6 +2662,15 @@ static gboolean on_close_request(GtkWindow *window, gpointer user_data) {
   tab = app_window_get_active_tab(win);
   if (tab != NULL && tab->subprocess != NULL)
     command_cancel(tab);
+  /* Also cancel subprocesses on any background tab (finding 6.3) —
+     their callbacks would otherwise fire after close_popups destroys
+     win->cmd_label. */
+  for (i = 0; i < win->tabs->len; i++) {
+    Tab *t = g_ptr_array_index(win->tabs, i);
+
+    if (t != NULL && t != tab && t->subprocess != NULL)
+      command_cancel(t);
+  }
 
   close_popups(win);
 
