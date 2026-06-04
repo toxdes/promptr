@@ -948,7 +948,11 @@ static Tab *add_new_tab(AppWindow *win) {
 
   name = g_strdup_printf("New Tab");
   tab = tab_new(win, name);
-  tab->layout_mode = 0;
+  {
+    g_autofree char *layout =
+        runtime_config_get_string(win->config, "layout", LAYOUT_DEFAULT);
+    tab->layout_mode = g_strcmp0(layout, "horizontal") == 0 ? 0 : 1;
+  }
   tab->marked_lines_str = g_strdup(runtime_config_get_string(
       win->config, "marked_lines", DEFAULT_MARKED_LINES_STR));
 
