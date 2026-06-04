@@ -2201,6 +2201,10 @@ void app_window_close_and_quit(AppWindow *win) {
     fclose(win->log_file);
     win->log_file = NULL;
   }
+  /* Cancel pending timers — their callbacks would dereference freed AppWindow.
+   */
+  if (win->esc_reset_timeout > 0)
+    g_source_remove(win->esc_reset_timeout);
   win->destroyed = TRUE;
   gtk_window_destroy(GTK_WINDOW(win->window));
 }
@@ -2566,7 +2570,8 @@ static void disarm_escape(AppWindow *win) {
 /* ── copy ──────────────────────────────────────────────────────── */
 
 static gboolean status_pop_cb(gpointer data) {
-  gtk_label_set_text(GTK_LABEL(data), "Ready");
+  if (data != NULL && GTK_IS_LABEL(data))
+    gtk_label_set_text(GTK_LABEL(data), "Ready");
   return G_SOURCE_REMOVE;
 }
 
