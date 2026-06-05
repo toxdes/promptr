@@ -99,6 +99,27 @@ static void cycle_dropdown_next(GtkWidget *dropdown);
 static void cycle_dropdown_prev(GtkWidget *dropdown);
 static void update_window_title(AppWindow *win, const char *tab_name);
 static void add_dropdown_hover(GtkWidget *dropdown, AppWindow *win);
+static void on_paned_position_changed(GObject *object, GParamSpec *pspec,
+                                      gpointer data);
+
+#define AGENT_ROW_LABEL_THRESHOLD 280
+
+static void on_paned_position_changed(GObject *object, GParamSpec *pspec,
+                                      gpointer data) {
+  Tab *tab = data;
+  GtkPaned *paned;
+  gboolean narrow;
+
+  (void)pspec;
+  if (tab->layout_mode != 1)
+    return;
+  paned = GTK_PANED(object);
+  narrow = gtk_paned_get_position(paned) < AGENT_ROW_LABEL_THRESHOLD;
+  if (tab->agent_text_label != NULL)
+    gtk_widget_set_visible(tab->agent_text_label, !narrow);
+  if (tab->model_text_label != NULL)
+    gtk_widget_set_visible(tab->model_text_label, !narrow);
+}
 
 static void dropdown_trunc_factory_setup(GtkSignalListItemFactory *factory,
                                          GtkListItem *item, gpointer data) {
@@ -109,7 +130,8 @@ static void dropdown_trunc_factory_setup(GtkSignalListItemFactory *factory,
   label = gtk_label_new(NULL);
   gtk_label_set_xalign(GTK_LABEL(label), 0.0f);
   gtk_label_set_ellipsize(GTK_LABEL(label), PANGO_ELLIPSIZE_MIDDLE);
-  gtk_label_set_width_chars(GTK_LABEL(label), 25);
+  gtk_label_set_width_chars(GTK_LABEL(label), 1);
+  gtk_label_set_max_width_chars(GTK_LABEL(label), 25);
   gtk_list_item_set_child(item, label);
 }
 
@@ -325,8 +347,10 @@ static GtkWidget *create_agent_row(Tab *tab, AppWindow *win) {
   gtk_widget_set_margin_bottom(row, 4);
 
   label = gtk_label_new("Agent");
+  gtk_label_set_ellipsize(GTK_LABEL(label), PANGO_ELLIPSIZE_END);
   gtk_widget_set_margin_end(label, 4);
   gtk_box_append(GTK_BOX(row), label);
+  tab->agent_text_label = label;
 
   opts = runtime_config_get_string_list(win->config, "agent_options");
   if (opts == NULL)
@@ -341,7 +365,7 @@ static GtkWidget *create_agent_row(Tab *tab, AppWindow *win) {
   tab->agent_dropdown = gtk_drop_down_new(G_LIST_MODEL(list), NULL);
   gtk_drop_down_set_selected(GTK_DROP_DOWN(tab->agent_dropdown), 0);
   gtk_widget_set_sensitive(tab->agent_dropdown, has_options);
-  gtk_widget_set_hexpand(tab->agent_dropdown, FALSE);
+  gtk_widget_set_hexpand(tab->agent_dropdown, TRUE);
   {
     GtkListItemFactory *f;
 
@@ -363,8 +387,10 @@ static GtkWidget *create_agent_row(Tab *tab, AppWindow *win) {
   opts = NULL;
 
   label = gtk_label_new("Model");
+  gtk_label_set_ellipsize(GTK_LABEL(label), PANGO_ELLIPSIZE_END);
   gtk_widget_set_margin_end(label, 4);
   gtk_box_append(GTK_BOX(row), label);
+  tab->model_text_label = label;
 
   opts = runtime_config_get_string_list(win->config, "model_options");
   if (opts == NULL)
@@ -379,7 +405,7 @@ static GtkWidget *create_agent_row(Tab *tab, AppWindow *win) {
   tab->model_dropdown = gtk_drop_down_new(G_LIST_MODEL(list), NULL);
   gtk_drop_down_set_selected(GTK_DROP_DOWN(tab->model_dropdown), 0);
   gtk_widget_set_sensitive(tab->model_dropdown, has_options);
-  gtk_widget_set_hexpand(tab->model_dropdown, FALSE);
+  gtk_widget_set_hexpand(tab->model_dropdown, TRUE);
   {
     GtkListItemFactory *f;
 
@@ -591,6 +617,8 @@ GtkWidget *tab_create_widgets(Tab *tab, AppWindow *win) {
     tab->layout_paned = gtk_paned_new(GTK_ORIENTATION_VERTICAL);
     gtk_stack_add_named(GTK_STACK(tab->content_stack), tab->layout_paned,
                         "paned");
+    g_signal_connect(tab->layout_paned, "notify::position",
+                     G_CALLBACK(on_paned_position_changed), tab);
 
     tab->pane_left = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4);
     tab->pane_right = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4);
