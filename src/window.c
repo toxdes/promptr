@@ -2603,10 +2603,14 @@ static void set_finished_state(Tab *tab, char *cmd, gint64 elapsed,
       gtk_text_buffer_set_text(buf, "", -1);
     lines = gtk_text_buffer_get_line_count(buf);
     gtk_widget_set_sensitive(tab->copy_btn, lines > 0);
+    log_append(win, "finished → empty output (follow_up=%s)",
+               tab->follow_up_active ? "true" : "false");
   }
 
-  log_append(win, "finished → Took %" G_GINT64_FORMAT "ms. %d lines.", ms,
-             lines);
+  log_append(win,
+             "finished → Took %" G_GINT64_FORMAT "ms. %d lines. "
+             "output_len=%zu.",
+             ms, lines, output != NULL ? strlen(output) : 0);
   g_free(cmd);
 
   gtk_button_set_label(GTK_BUTTON(tab->submit_btn), "Submit");
@@ -2794,6 +2798,12 @@ static void command_finished_cb(Tab *tab, const char *output,
     g_free(cmd);
     return;
   }
+
+  log_append(win,
+             "callback → exit_code=%d cleaned=%s stdout_len=%zu stderr_len=%zu",
+             exit_code, exited_cleanly ? "true" : "false",
+             output != NULL ? strlen(output) : 0,
+             stderr_output != NULL ? strlen(stderr_output) : 0);
 
   if (!exited_cleanly) {
     set_canceled_state(tab, cmd);
