@@ -1,5 +1,6 @@
 #include "config.h"
 #include "window.h"
+#include <curl/curl.h>
 #include <gtk/gtk.h>
 #include <gtksourceview/gtksource.h>
 
@@ -32,6 +33,8 @@ static void on_shutdown(GApplication *app, gpointer user_data) {
 int main(int argc, char *argv[]) {
   GtkApplication *app;
   int status;
+
+  curl_global_init(CURL_GLOBAL_ALL);
 
   {
     const char *cfg_dir;

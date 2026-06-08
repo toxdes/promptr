@@ -3,6 +3,10 @@ PKG_CONF := pkg-config
 
 GTK_CFLAGS  := $(shell $(PKG_CONF) --cflags gtk4 | sed 's/-I/-isystem /g')
 GTK_LIBS    := $(shell $(PKG_CONF) --libs gtk4)
+CURL_CFLAGS := $(shell $(PKG_CONF) --cflags libcurl)
+CURL_LIBS   := $(shell $(PKG_CONF) --libs libcurl)
+JSON_CFLAGS := $(shell $(PKG_CONF) --cflags json-glib-1.0)
+JSON_LIBS   := $(shell $(PKG_CONF) --libs json-glib-1.0)
 LSH_PKG := $(shell $(PKG_CONF) --exists gtk4-layer-shell-0 && echo gtk4-layer-shell-0 || echo gtk-layer-shell-0)
 LSH_CFLAGS  := $(shell $(PKG_CONF) --cflags $(LSH_PKG) | sed 's/-I/-isystem /g')
 LSH_LIBS    := $(shell $(PKG_CONF) --libs $(LSH_PKG))
@@ -28,8 +32,8 @@ endif
 VERSION := $(shell cat VERSION)$(VER_SUFFIX)
 TARGET  := promptr$(VER_SUFFIX)
 
-CFLAGS  := -std=c11 $(WARN_FLAGS) $(OPT_FLAGS) -I. -Isrc $(GTK_CFLAGS) $(LSH_CFLAGS) $(SV_CFLAGS) -DVERSION=\"$(VERSION)\" -DAPP_ID=\"$(APP_ID)\" $(DEBUG_FLAGS)
-LDFLAGS := $(GTK_LIBS) $(LSH_LIBS) $(SV_LIBS)
+CFLAGS  := -std=c11 $(WARN_FLAGS) $(OPT_FLAGS) -I. -Isrc $(GTK_CFLAGS) $(LSH_CFLAGS) $(SV_CFLAGS) $(CURL_CFLAGS) $(JSON_CFLAGS) -DVERSION=\"$(VERSION)\" -DAPP_ID=\"$(APP_ID)\" $(DEBUG_FLAGS)
+LDFLAGS := $(GTK_LIBS) $(LSH_LIBS) $(SV_LIBS) $(CURL_LIBS) $(JSON_LIBS)
 
 SRCDIR   := src
 BUILDDIR := build/$(BUILD)

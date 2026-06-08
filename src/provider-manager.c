@@ -3,6 +3,7 @@
 #include "configfile.h"
 #include "provider.h"
 #include "providers/opencode.h"
+#include "providers/openrouter.h"
 #include <glib.h>
 #include <string.h>
 
@@ -17,6 +18,8 @@ Provider *provider_manager_create(RuntimeConfig *config, GError **error) {
 
   if (g_strcmp0(provider_name, "opencode") == 0) {
     p->vtable = &opencode_vtable;
+  } else if (g_strcmp0(provider_name, "openrouter") == 0) {
+    p->vtable = &openrouter_vtable;
   } else {
     g_set_error(error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND, "Unknown provider: %s",
                 provider_name);
