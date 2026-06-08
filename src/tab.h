@@ -22,6 +22,7 @@ typedef struct {
   GtkWidget *model_dropdown;
   GtkWidget *agent_text_label;
   GtkWidget *model_text_label;
+  gboolean paned_positioned;
   GtkWidget *submit_btn;
   GtkWidget *cancel_btn;
   GtkWidget *spinner;

@@ -99,8 +99,26 @@ static void cycle_dropdown_next(GtkWidget *dropdown);
 static void cycle_dropdown_prev(GtkWidget *dropdown);
 static void update_window_title(AppWindow *win, const char *tab_name);
 static void add_dropdown_hover(GtkWidget *dropdown, AppWindow *win);
+static void set_paned_half(GtkPaned *paned, Tab *tab);
+static void set_paned_half_notify(GObject *object, GParamSpec *pspec,
+                                  gpointer data);
 static void on_paned_position_changed(GObject *object, GParamSpec *pspec,
                                       gpointer data);
+
+static void set_paned_half(GtkPaned *paned, Tab *tab) {
+  int size = tab->layout_mode == 0 ? gtk_widget_get_height(GTK_WIDGET(paned))
+                                   : gtk_widget_get_width(GTK_WIDGET(paned));
+  if (size > 0 && !tab->paned_positioned) {
+    gtk_paned_set_position(paned, size / 2);
+    tab->paned_positioned = TRUE;
+  }
+}
+
+static void set_paned_half_notify(GObject *object, GParamSpec *pspec,
+                                  gpointer data) {
+  (void)pspec;
+  set_paned_half(GTK_PANED(object), data);
+}
 
 #define AGENT_ROW_LABEL_THRESHOLD 280
 
@@ -663,6 +681,7 @@ static void tab_update_status_dot(Tab *tab) {
 
   gtk_widget_remove_css_class(dot, "loading");
   gtk_widget_remove_css_class(dot, "finished");
+  gtk_widget_remove_css_class(dot, "finished-empty");
 
   if (tab->state == STATE_LOADING)
     gtk_widget_add_css_class(dot, "loading");
@@ -1555,8 +1574,9 @@ static void apply_layout(Tab *tab) {
     gtk_paned_set_shrink_start_child(GTK_PANED(tab->layout_paned), FALSE);
     gtk_paned_set_shrink_end_child(GTK_PANED(tab->layout_paned), FALSE);
 
-    gtk_paned_set_position(GTK_PANED(tab->layout_paned),
-                           orientation == GTK_ORIENTATION_VERTICAL ? 350 : 450);
+    set_paned_half(GTK_PANED(tab->layout_paned), tab);
+    g_signal_connect(tab->layout_paned, "notify::position",
+                     G_CALLBACK(set_paned_half_notify), tab);
 
     gtk_stack_set_visible_child_name(GTK_STACK(tab->content_stack), "paned");
     gtk_widget_grab_focus(tab->prompt_view);
@@ -2605,6 +2625,26 @@ static void set_finished_state(Tab *tab, char *cmd, gint64 elapsed,
     gtk_widget_set_sensitive(tab->copy_btn, lines > 0);
     log_append(win, "finished → empty output (follow_up=%s)",
                tab->follow_up_active ? "true" : "false");
+  }
+
+  gtk_widget_remove_css_class(tab->status_dot, "finished-empty");
+  gtk_widget_set_tooltip_text(tab->status_dot, NULL);
+  if (output == NULL || output[0] == '\0') {
+    gtk_widget_add_css_class(tab->status_dot, "finished-empty");
+    gtk_widget_set_tooltip_text(tab->status_dot, "Command succeeded but "
+                                                 "returned no output — may "
+                                                 "be an upstream issue");
+    {
+      GtkAlertDialog *dlg;
+      const char *buttons[] = {"Dismiss", NULL};
+
+      dlg = gtk_alert_dialog_new("Upstream Issue");
+      gtk_alert_dialog_set_detail(
+          dlg, "Command succeeded but returned no output.\n"
+               "This may be an upstream issue — try resubmitting your query.");
+      gtk_alert_dialog_set_buttons(dlg, buttons);
+      gtk_alert_dialog_show(dlg, GTK_WINDOW(win->window));
+    }
   }
 
   log_append(win,
@@ -4380,6 +4420,9 @@ static void load_css(int prompt_font_size, int output_font_size) {
                        "}"
                        ".tab-status-dot.finished {"
                        "  color: #33cc7f;"
+                       "}"
+                       ".tab-status-dot.finished-empty {"
+                       "  color: #c42b1c;"
                        "}"
                        ".tab-add-btn {"
                        "  background: none;"
