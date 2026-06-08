@@ -99,6 +99,45 @@ static void cycle_dropdown_next(GtkWidget *dropdown);
 static void cycle_dropdown_prev(GtkWidget *dropdown);
 static void update_window_title(AppWindow *win, const char *tab_name);
 static void add_dropdown_hover(GtkWidget *dropdown, AppWindow *win);
+static void set_paned_half(GtkPaned *paned, Tab *tab);
+static void set_paned_half_notify(GObject *object, GParamSpec *pspec,
+                                  gpointer data);
+static void on_paned_position_changed(GObject *object, GParamSpec *pspec,
+                                      gpointer data);
+
+static void set_paned_half(GtkPaned *paned, Tab *tab) {
+  int size = tab->layout_mode == 0 ? gtk_widget_get_height(GTK_WIDGET(paned))
+                                   : gtk_widget_get_width(GTK_WIDGET(paned));
+  if (size > 0 && !tab->paned_positioned) {
+    gtk_paned_set_position(paned, size / 2);
+    tab->paned_positioned = TRUE;
+  }
+}
+
+static void set_paned_half_notify(GObject *object, GParamSpec *pspec,
+                                  gpointer data) {
+  (void)pspec;
+  set_paned_half(GTK_PANED(object), data);
+}
+
+#define AGENT_ROW_LABEL_THRESHOLD 280
+
+static void on_paned_position_changed(GObject *object, GParamSpec *pspec,
+                                      gpointer data) {
+  Tab *tab = data;
+  GtkPaned *paned;
+  gboolean narrow;
+
+  (void)pspec;
+  if (tab->layout_mode != 1)
+    return;
+  paned = GTK_PANED(object);
+  narrow = gtk_paned_get_position(paned) < AGENT_ROW_LABEL_THRESHOLD;
+  if (tab->agent_text_label != NULL)
+    gtk_widget_set_visible(tab->agent_text_label, !narrow);
+  if (tab->model_text_label != NULL)
+    gtk_widget_set_visible(tab->model_text_label, !narrow);
+}
 
 static void dropdown_trunc_factory_setup(GtkSignalListItemFactory *factory,
                                          GtkListItem *item, gpointer data) {
@@ -109,7 +148,8 @@ static void dropdown_trunc_factory_setup(GtkSignalListItemFactory *factory,
   label = gtk_label_new(NULL);
   gtk_label_set_xalign(GTK_LABEL(label), 0.0f);
   gtk_label_set_ellipsize(GTK_LABEL(label), PANGO_ELLIPSIZE_MIDDLE);
-  gtk_label_set_width_chars(GTK_LABEL(label), 25);
+  gtk_label_set_width_chars(GTK_LABEL(label), 1);
+  gtk_label_set_max_width_chars(GTK_LABEL(label), 25);
   gtk_list_item_set_child(item, label);
 }
 
@@ -325,8 +365,10 @@ static GtkWidget *create_agent_row(Tab *tab, AppWindow *win) {
   gtk_widget_set_margin_bottom(row, 4);
 
   label = gtk_label_new("Agent");
+  gtk_label_set_ellipsize(GTK_LABEL(label), PANGO_ELLIPSIZE_END);
   gtk_widget_set_margin_end(label, 4);
   gtk_box_append(GTK_BOX(row), label);
+  tab->agent_text_label = label;
 
   opts = runtime_config_get_string_list(win->config, "agent_options");
   if (opts == NULL)
@@ -341,7 +383,7 @@ static GtkWidget *create_agent_row(Tab *tab, AppWindow *win) {
   tab->agent_dropdown = gtk_drop_down_new(G_LIST_MODEL(list), NULL);
   gtk_drop_down_set_selected(GTK_DROP_DOWN(tab->agent_dropdown), 0);
   gtk_widget_set_sensitive(tab->agent_dropdown, has_options);
-  gtk_widget_set_hexpand(tab->agent_dropdown, FALSE);
+  gtk_widget_set_hexpand(tab->agent_dropdown, TRUE);
   {
     GtkListItemFactory *f;
 
@@ -363,8 +405,10 @@ static GtkWidget *create_agent_row(Tab *tab, AppWindow *win) {
   opts = NULL;
 
   label = gtk_label_new("Model");
+  gtk_label_set_ellipsize(GTK_LABEL(label), PANGO_ELLIPSIZE_END);
   gtk_widget_set_margin_end(label, 4);
   gtk_box_append(GTK_BOX(row), label);
+  tab->model_text_label = label;
 
   opts = runtime_config_get_string_list(win->config, "model_options");
   if (opts == NULL)
@@ -379,7 +423,7 @@ static GtkWidget *create_agent_row(Tab *tab, AppWindow *win) {
   tab->model_dropdown = gtk_drop_down_new(G_LIST_MODEL(list), NULL);
   gtk_drop_down_set_selected(GTK_DROP_DOWN(tab->model_dropdown), 0);
   gtk_widget_set_sensitive(tab->model_dropdown, has_options);
-  gtk_widget_set_hexpand(tab->model_dropdown, FALSE);
+  gtk_widget_set_hexpand(tab->model_dropdown, TRUE);
   {
     GtkListItemFactory *f;
 
@@ -591,6 +635,10 @@ GtkWidget *tab_create_widgets(Tab *tab, AppWindow *win) {
     tab->layout_paned = gtk_paned_new(GTK_ORIENTATION_VERTICAL);
     gtk_stack_add_named(GTK_STACK(tab->content_stack), tab->layout_paned,
                         "paned");
+    g_signal_connect(tab->layout_paned, "notify::position",
+                     G_CALLBACK(on_paned_position_changed), tab);
+    g_signal_connect(tab->layout_paned, "notify::position",
+                     G_CALLBACK(set_paned_half_notify), tab);
 
     tab->pane_left = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4);
     tab->pane_right = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4);
@@ -635,6 +683,7 @@ static void tab_update_status_dot(Tab *tab) {
 
   gtk_widget_remove_css_class(dot, "loading");
   gtk_widget_remove_css_class(dot, "finished");
+  gtk_widget_remove_css_class(dot, "finished-empty");
 
   if (tab->state == STATE_LOADING)
     gtk_widget_add_css_class(dot, "loading");
@@ -1527,8 +1576,7 @@ static void apply_layout(Tab *tab) {
     gtk_paned_set_shrink_start_child(GTK_PANED(tab->layout_paned), FALSE);
     gtk_paned_set_shrink_end_child(GTK_PANED(tab->layout_paned), FALSE);
 
-    gtk_paned_set_position(GTK_PANED(tab->layout_paned),
-                           orientation == GTK_ORIENTATION_VERTICAL ? 350 : 450);
+    set_paned_half(GTK_PANED(tab->layout_paned), tab);
 
     gtk_stack_set_visible_child_name(GTK_STACK(tab->content_stack), "paned");
     gtk_widget_grab_focus(tab->prompt_view);
@@ -2575,10 +2623,35 @@ static void set_finished_state(Tab *tab, char *cmd, gint64 elapsed,
       gtk_text_buffer_set_text(buf, "", -1);
     lines = gtk_text_buffer_get_line_count(buf);
     gtk_widget_set_sensitive(tab->copy_btn, lines > 0);
+    log_append(win, "finished → empty output (follow_up=%s)",
+               tab->follow_up_active ? "true" : "false");
   }
 
-  log_append(win, "finished → Took %" G_GINT64_FORMAT "ms. %d lines.", ms,
-             lines);
+  gtk_widget_remove_css_class(tab->status_dot, "finished-empty");
+  gtk_widget_set_tooltip_text(tab->status_dot, NULL);
+  if (output == NULL || output[0] == '\0') {
+    gtk_widget_add_css_class(tab->status_dot, "finished-empty");
+    gtk_widget_set_tooltip_text(tab->status_dot, "Command succeeded but "
+                                                 "returned no output — may "
+                                                 "be an upstream issue");
+    {
+      GtkAlertDialog *dlg;
+      const char *buttons[] = {"Dismiss", NULL};
+
+      dlg = gtk_alert_dialog_new("Upstream Issue");
+      gtk_alert_dialog_set_detail(
+          dlg, "Command succeeded but returned no output.\n"
+               "This may be an upstream issue — try resubmitting your query.");
+      gtk_alert_dialog_set_buttons(dlg, buttons);
+      gtk_alert_dialog_show(dlg, GTK_WINDOW(win->window));
+      g_object_unref(dlg);
+    }
+  }
+
+  log_append(win,
+             "finished → Took %" G_GINT64_FORMAT "ms. %d lines. "
+             "output_len=%zu.",
+             ms, lines, output != NULL ? strlen(output) : 0);
   g_free(cmd);
 
   gtk_button_set_label(GTK_BUTTON(tab->submit_btn), "Submit");
@@ -2766,6 +2839,12 @@ static void command_finished_cb(Tab *tab, const char *output,
     g_free(cmd);
     return;
   }
+
+  log_append(win,
+             "callback → exit_code=%d cleaned=%s stdout_len=%zu stderr_len=%zu",
+             exit_code, exited_cleanly ? "true" : "false",
+             output != NULL ? strlen(output) : 0,
+             stderr_output != NULL ? strlen(stderr_output) : 0);
 
   if (!exited_cleanly) {
     set_canceled_state(tab, cmd);
@@ -4342,6 +4421,9 @@ static void load_css(int prompt_font_size, int output_font_size) {
                        "}"
                        ".tab-status-dot.finished {"
                        "  color: #33cc7f;"
+                       "}"
+                       ".tab-status-dot.finished-empty {"
+                       "  color: #c42b1c;"
                        "}"
                        ".tab-add-btn {"
                        "  background: none;"
