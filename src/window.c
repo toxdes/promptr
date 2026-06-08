@@ -637,6 +637,8 @@ GtkWidget *tab_create_widgets(Tab *tab, AppWindow *win) {
                         "paned");
     g_signal_connect(tab->layout_paned, "notify::position",
                      G_CALLBACK(on_paned_position_changed), tab);
+    g_signal_connect(tab->layout_paned, "notify::position",
+                     G_CALLBACK(set_paned_half_notify), tab);
 
     tab->pane_left = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4);
     tab->pane_right = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4);
@@ -1575,8 +1577,6 @@ static void apply_layout(Tab *tab) {
     gtk_paned_set_shrink_end_child(GTK_PANED(tab->layout_paned), FALSE);
 
     set_paned_half(GTK_PANED(tab->layout_paned), tab);
-    g_signal_connect(tab->layout_paned, "notify::position",
-                     G_CALLBACK(set_paned_half_notify), tab);
 
     gtk_stack_set_visible_child_name(GTK_STACK(tab->content_stack), "paned");
     gtk_widget_grab_focus(tab->prompt_view);
@@ -2644,6 +2644,7 @@ static void set_finished_state(Tab *tab, char *cmd, gint64 elapsed,
                "This may be an upstream issue — try resubmitting your query.");
       gtk_alert_dialog_set_buttons(dlg, buttons);
       gtk_alert_dialog_show(dlg, GTK_WINDOW(win->window));
+      g_object_unref(dlg);
     }
   }
 
