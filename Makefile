@@ -28,7 +28,7 @@ endif
 VERSION := $(shell cat VERSION)$(VER_SUFFIX)
 TARGET  := promptr$(VER_SUFFIX)
 
-CFLAGS  := -std=c11 $(WARN_FLAGS) $(OPT_FLAGS) -I. $(GTK_CFLAGS) $(LSH_CFLAGS) $(SV_CFLAGS) -DVERSION=\"$(VERSION)\" -DAPP_ID=\"$(APP_ID)\" $(DEBUG_FLAGS)
+CFLAGS  := -std=c11 $(WARN_FLAGS) $(OPT_FLAGS) -I. -Isrc $(GTK_CFLAGS) $(LSH_CFLAGS) $(SV_CFLAGS) -DVERSION=\"$(VERSION)\" -DAPP_ID=\"$(APP_ID)\" $(DEBUG_FLAGS)
 LDFLAGS := $(GTK_LIBS) $(LSH_LIBS) $(SV_LIBS)
 
 SRCDIR   := src
@@ -40,7 +40,7 @@ DATADIR = $(PREFIX)/share
 ICONDIR = $(DATADIR)/icons/hicolor/scalable/apps
 APPDIR  = $(DATADIR)/applications
 
-SOURCES := $(wildcard $(SRCDIR)/*.c)
+SOURCES := $(wildcard $(SRCDIR)/*.c) $(wildcard $(SRCDIR)/providers/*.c)
 OBJECTS := $(patsubst $(SRCDIR)/%.c,$(BUILDDIR)/%.o,$(SOURCES))
 DEPS    := $(OBJECTS:.o=.d)
 
@@ -51,7 +51,7 @@ $(BUILDDIR)/%.o: $(SRCDIR)/%.c | $(BUILDDIR)
 	$(CC) $(CFLAGS) -MMD -MP -MF $(BUILDDIR)/$*.d -c $< -o $@
 
 $(BUILDDIR):
-	mkdir -p $(BUILDDIR)
+	mkdir -p $(BUILDDIR) $(BUILDDIR)/providers
 
 -include $(DEPS)
 

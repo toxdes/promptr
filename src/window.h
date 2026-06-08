@@ -22,7 +22,6 @@ typedef struct _AppWindow {
   gboolean destroyed;
 
   RuntimeConfig *config;
-  char *opencode_bin;
 
   guint kb_focus_keyval;
   GdkModifierType kb_focus_mods;
@@ -79,5 +78,8 @@ void app_window_present(AppWindow *win);
 void app_window_close_and_quit(AppWindow *win);
 void app_window_free(gpointer data);
 Tab *app_window_get_active_tab(AppWindow *win);
+
+void log_append(AppWindow *win, const char *fmt, ...)
+    __attribute__((format(printf, 2, 3)));
 
 #endif

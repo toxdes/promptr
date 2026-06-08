@@ -28,6 +28,12 @@ kb_cancel=
 # Path to the opencode binary
 opencode_path=opencode
 
+# Backend provider (opencode, openrouter)
+provider=opencode
+
+# OpenRouter API key (or set OPENROUTER_API_KEY env var)
+openrouter_api_key=
+
 # Agent dropdown options (comma-separated, first=default)
 agent_options=linux_cmd,None
 

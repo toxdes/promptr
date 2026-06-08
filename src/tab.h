@@ -2,9 +2,17 @@
 #define TAB_H
 
 #include "configfile.h"
+#include "provider.h"
 #include <gtk/gtk.h>
 
 typedef struct _AppWindow AppWindow;
+
+typedef enum {
+  STATE_IDLE = 0,
+  STATE_LOADING,
+  STATE_FINISHED,
+  STATE_CANCELED,
+} AppState;
 
 typedef struct {
   char *id;
@@ -15,6 +23,14 @@ typedef struct {
   AppWindow *win;
 
   char *tmpdir_path;
+
+  /* Per-tab provider */
+  Provider *provider;
+
+  /* Canonical conversation history (provider-agnostic) */
+  ProviderMessage *messages;
+  int n_messages;
+  int messages_cap;
 
   GtkWidget *prompt_view;
   GtkWidget *placeholder_label;
@@ -63,7 +79,7 @@ typedef struct {
   GCancellable *cancellable;
   char *cmd_string;
   gint64 start_time;
-  int state;
+  AppState state;
 
   char *marked_lines_str;
 
@@ -86,6 +102,11 @@ void tab_delete_saved(const char *uuid);
 void remove_dir(const char *path);
 
 void tab_auto_rename(Tab *tab);
+
+/* Conversation history helpers */
+void tab_history_add(Tab *tab, ProviderRole role, const char *content);
+void tab_history_clear(Tab *tab);
+char *tab_history_render_display(Tab *tab, const char *current_output);
 
 GtkWidget *tab_create_widgets(Tab *tab, AppWindow *win);
 GtkWidget *tab_create_label(Tab *tab, int idx, AppWindow *win);
