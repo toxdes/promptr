@@ -5,6 +5,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential gcc make pkg-config python3 curl ca-certificates \
     libgtk-4-dev libgtksourceview-5-dev libgtk4-layer-shell-dev \
+    libcurl4-openssl-dev libjson-glib-dev \
     dpkg-dev rpm \
     && update-ca-certificates \
     && rm -rf /var/lib/apt/lists/*

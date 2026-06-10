@@ -26,6 +26,7 @@ typedef struct {
 
   /* Per-tab provider */
   Provider *provider;
+  char *provider_name; /* "opencode", "openrouter" — persisted in .conf */
 
   /* Canonical conversation history (provider-agnostic) */
   ProviderMessage *messages;

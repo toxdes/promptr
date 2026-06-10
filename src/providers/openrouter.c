@@ -56,6 +56,8 @@ static void on_or_done(GError *error, long response_code,
                        const char *content_type, gpointer user);
 static void process_sse(OpenRouterImpl *ori);
 static char *sse_extract_content(const char *json_line, Tab *debug_tab);
+static char *sse_extract_reasoning(const char *json_line);
+static gboolean openrouter_free_idle(gpointer user_data);
 
 /* ── vtable ───────────────────────────────────────────────────── */
 
@@ -109,11 +111,27 @@ fail:
   return FALSE;
 }
 
+static void openrouter_cancel_request(OpenRouterImpl *ori);
+
 static void openrouter_destroy(void *impl) {
   OpenRouterImpl *ori = impl;
 
   if (ori == NULL)
     return;
+
+  /* Cancel any in-flight HTTP request and make on_or_done a no-op */
+  openrouter_cancel_request(ori);
+  ori->callback = NULL;
+  ori->active_tab = NULL;
+
+  /* Schedule actual free via idle — ensures any already-queued
+     dispatch_done callback runs before our memory is gone, since
+     idle callbacks are processed FIFO on the same main loop. */
+  g_idle_add_full(G_PRIORITY_DEFAULT_IDLE, openrouter_free_idle, ori, NULL);
+}
+
+static gboolean openrouter_free_idle(gpointer user_data) {
+  OpenRouterImpl *ori = user_data;
 
   if (ori->sse_buffer != NULL)
     g_string_free(ori->sse_buffer, TRUE);
@@ -121,13 +139,23 @@ static void openrouter_destroy(void *impl) {
   g_free(ori->api_key);
   g_free(ori->base_url);
   g_free(ori);
+  return G_SOURCE_REMOVE;
 }
 
 static void openrouter_cleanup_session(void *impl, gpointer tab_key) {
   OpenRouterImpl *ori = impl;
 
-  if (ori->active_tab == tab_key)
+  if (ori->active_tab == tab_key) {
+    openrouter_cancel_request(ori);
     ori->active_tab = NULL;
+    ori->callback = NULL;
+  }
+}
+
+/* Cancel the active HTTP request by cancelling the tab's GCancellable */
+static void openrouter_cancel_request(OpenRouterImpl *ori) {
+  if (ori->active_tab != NULL && ori->active_tab->cancellable != NULL)
+    g_cancellable_cancel(ori->active_tab->cancellable);
 }
 
 /* ── submit ───────────────────────────────────────────────────── */
@@ -300,12 +328,6 @@ static void on_or_chunk(const char *data, gsize len, gpointer user) {
 
   g_string_append_len(ori->sse_buffer, data, len);
 
-  /* Log first chunk size to confirm streaming delivery */
-  if (ori->full_output == NULL && ori->active_tab != NULL &&
-      ori->active_tab->win != NULL)
-    log_append(ori->active_tab->win, "openrouter ← chunk=%zu buf=%zu", len,
-               ori->sse_buffer->len);
-
   /* Heartbeat timeout: if no data event within HEARTBEAT_TIMEOUT,
      assume the upstream model never started and abort. */
   ori->last_event_time = g_get_monotonic_time();
@@ -425,6 +447,9 @@ static void process_sse(OpenRouterImpl *ori) {
   char *p;
   char *event_end;
 
+  if (ori->sse_buffer == NULL)
+    return;
+
   p = ori->sse_buffer->str;
 
   for (;;) {
@@ -472,19 +497,28 @@ static void process_sse(OpenRouterImpl *ori) {
           ori->saw_data_event = TRUE;
 
           if (ori->active_tab != NULL && ori->active_tab->win != NULL)
-            log_append(ori->active_tab->win,
-                       "openrouter ← content (%zu bytes): [%.60s]",
-                       strlen(content), content);
+            log_append(ori->active_tab->win, "openrouter ← text: %.*s",
+                       (int)(strlen(content) < 120 ? strlen(content) : 120),
+                       content);
 
           /* Emit CHUNK synchronously — GTK will redraw on next frame */
           if (ori->callback != NULL && ori->active_tab != NULL) {
             ProviderEvent chunk = {PROVIDER_EVENT_CHUNK, content, NULL, 0};
+
             ori->callback(ori->active_tab, &chunk, ori->callback_data);
           }
-        } else if (ori->active_tab != NULL && ori->active_tab->win != NULL &&
-                   ori->full_output == NULL) {
-          /* Log non-data SSE events only until we see first content */
-          log_append(ori->active_tab->win, "openrouter ← sse: %s", data_val);
+        } else {
+          /* No content — check for reasoning tokens, log only */
+          char *reasoning = sse_extract_reasoning(data_val);
+
+          if (reasoning != NULL) {
+            if (ori->active_tab != NULL && ori->active_tab->win != NULL)
+              log_append(
+                  ori->active_tab->win, "openrouter ← reasoning: %.*s",
+                  (int)(strlen(reasoning) < 200 ? strlen(reasoning) : 200),
+                  reasoning);
+            g_free(reasoning);
+          }
         }
         g_free(content);
       }
@@ -542,11 +576,60 @@ static char *sse_extract_content(const char *json_line, Tab *debug_tab) {
   if (delta == NULL)
     return NULL;
 
-  content = json_object_get_string_member(delta, "content");
-  if (content == NULL || content[0] == '\0')
+  if (json_object_has_member(delta, "content")) {
+    content = json_object_get_string_member(delta, "content");
+
+    if (content != NULL && content[0] != '\0')
+      return g_strdup(content);
+  }
+
+  return NULL;
+}
+
+/* ── SSE reasoning extractor (log-only, never displayed) ──────── */
+
+static char *sse_extract_reasoning(const char *json_line) {
+  g_autoptr(JsonParser) parser = NULL;
+  g_autoptr(GError) error = NULL;
+  JsonNode *root;
+  JsonObject *obj, *delta;
+  JsonArray *choices;
+  JsonNode *choice_node;
+  JsonObject *choice_obj;
+
+  if (json_line == NULL || json_line[0] == '\0')
     return NULL;
 
-  return g_strdup(content);
+  parser = json_parser_new();
+  if (!json_parser_load_from_data(parser, json_line, -1, &error))
+    return NULL;
+
+  root = json_parser_get_root(parser);
+  if (root == NULL || JSON_NODE_HOLDS_VALUE(root))
+    return NULL;
+
+  obj = json_node_get_object(root);
+  choices = json_object_get_array_member(obj, "choices");
+  if (choices == NULL || json_array_get_length(choices) == 0)
+    return NULL;
+
+  choice_node = json_array_get_element(choices, 0);
+  if (choice_node == NULL || JSON_NODE_HOLDS_VALUE(choice_node))
+    return NULL;
+
+  choice_obj = json_node_get_object(choice_node);
+  delta = json_object_get_object_member(choice_obj, "delta");
+  if (delta == NULL)
+    return NULL;
+
+  if (json_object_has_member(delta, "reasoning")) {
+    const char *reasoning = json_object_get_string_member(delta, "reasoning");
+
+    if (reasoning != NULL && reasoning[0] != '\0')
+      return g_strdup(reasoning);
+  }
+
+  return NULL;
 }
 
 /* ── display string ───────────────────────────────────────────── */

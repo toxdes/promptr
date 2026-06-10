@@ -17,6 +17,8 @@ typedef struct _AppWindow {
 
   GtkWidget *log_popup;
   GtkWidget *shortcuts_popup;
+  GSimpleAction *provider_action;
+  GMenu *provider_submenu;
   FILE *log_file;
 
   gboolean destroyed;
@@ -81,5 +83,8 @@ Tab *app_window_get_active_tab(AppWindow *win);
 
 void log_append(AppWindow *win, const char *fmt, ...)
     __attribute__((format(printf, 2, 3)));
+
+void show_error_dialog(GtkWindow *parent, const char *title,
+                       const char *detail);
 
 #endif

@@ -16,6 +16,9 @@ static char *tabs_dir(void) {
   return g_strdup(dir);
 }
 
+/* Only show one provider-error dialog per session */
+static gboolean provider_error_shown = FALSE;
+
 static char *tmp_root(void) {
   const char *data_dir;
   g_autofree char *dir = NULL;
@@ -94,15 +97,27 @@ Tab *tab_new(AppWindow *win, const char *name) {
   }
 
   /* Create per-tab provider from config */
-  if (win != NULL && win->config != NULL) {
-    GError *error = NULL;
+  {
+    g_autofree char *err_msg = NULL;
 
-    tab->provider = provider_manager_create(win->config, &error);
-    if (tab->provider == NULL) {
-      g_warning("Failed to create provider for tab %s: %s", tab->name,
-                error != NULL ? error->message : "unknown");
-      if (error != NULL)
-        g_error_free(error);
+    if (win != NULL && win->config != NULL) {
+      tab->provider_name =
+          runtime_config_get_string(win->config, "provider", PROVIDER_DEFAULT);
+      tab->provider = provider_manager_create_or_fallback(
+          win->config, tab->provider_name, &err_msg);
+      if (err_msg != NULL) {
+        g_warning("Provider '%s' for new tab failed, fell back to opencode: %s",
+                  tab->provider_name, err_msg);
+        g_free(tab->provider_name);
+        tab->provider_name = g_strdup("opencode");
+      }
+    }
+
+    if (err_msg != NULL && win != NULL && win->window != NULL &&
+        !provider_error_shown) {
+      provider_error_shown = TRUE;
+      show_error_dialog(GTK_WINDOW(win->window), "Provider Not Available",
+                        err_msg);
     }
   }
 
@@ -144,6 +159,7 @@ static void tab_free(Tab *tab) {
   g_free(tab->tmpdir_path);
   g_free(tab->last_query);
   g_free(tab->last_output);
+  g_free(tab->provider_name);
   g_free(tab->cmd_string);
   g_free(tab->marked_lines_str);
 
@@ -197,6 +213,8 @@ void tab_save(Tab *tab) {
   g_key_file_set_boolean(kf, "tab", "is_open", tab->is_open);
   g_key_file_set_boolean(kf, "tab", "has_activity", tab->has_activity);
   g_key_file_set_boolean(kf, "tab", "follow_up", tab->follow_up);
+  if (tab->provider_name != NULL)
+    g_key_file_set_string(kf, "tab", "provider", tab->provider_name);
 
   {
     char *agent, *model;
@@ -320,16 +338,37 @@ Tab *tab_load(AppWindow *win, const char *uuid) {
     tab->tmpdir_path = g_build_filename(root, tab->id, NULL);
   }
 
-  /* Create per-tab provider from config */
-  if (win != NULL && win->config != NULL) {
-    GError *error = NULL;
+  /* Read per-tab provider name from saved state, fall back to config */
+  {
+    g_autofree char *saved = g_key_file_get_string(kf, "tab", "provider", NULL);
 
-    tab->provider = provider_manager_create(win->config, &error);
-    if (tab->provider == NULL) {
-      g_warning("Failed to create provider for restored tab %s: %s", tab->name,
-                error != NULL ? error->message : "unknown");
-      if (error != NULL)
-        g_error_free(error);
+    tab->provider_name =
+        saved != NULL ? g_strdup(saved)
+                      : runtime_config_get_string(win->config, "provider",
+                                                  PROVIDER_DEFAULT);
+  }
+
+  /* Create per-tab provider */
+  {
+    g_autofree char *err_msg = NULL;
+
+    if (win != NULL && win->config != NULL) {
+      tab->provider = provider_manager_create_or_fallback(
+          win->config, tab->provider_name, &err_msg);
+      if (err_msg != NULL) {
+        g_warning(
+            "Provider '%s' for restored tab failed, fell back to opencode: %s",
+            tab->provider_name, err_msg);
+        g_free(tab->provider_name);
+        tab->provider_name = g_strdup("opencode");
+      }
+    }
+
+    if (err_msg != NULL && win != NULL && win->window != NULL &&
+        !provider_error_shown) {
+      provider_error_shown = TRUE;
+      show_error_dialog(GTK_WINDOW(win->window), "Provider Not Available",
+                        err_msg);
     }
   }
 
