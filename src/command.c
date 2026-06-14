@@ -22,7 +22,8 @@ static void child_setup(gpointer user_data) {
 static void communicate_cb(GObject *source, GAsyncResult *result,
                            gpointer user_data);
 
-void command_execute_argv(Tab *tab, char **argv, CommandCallback callback) {
+void command_execute_argv(Tab *tab, char **argv, const char *cwd,
+                          CommandCallback callback) {
   GSubprocessLauncher *launcher;
   GSubprocess *proc;
   GError *error = NULL;
@@ -31,6 +32,8 @@ void command_execute_argv(Tab *tab, char **argv, CommandCallback callback) {
   launcher = g_subprocess_launcher_new(G_SUBPROCESS_FLAGS_STDOUT_PIPE |
                                        G_SUBPROCESS_FLAGS_STDERR_PIPE);
   g_subprocess_launcher_set_child_setup(launcher, child_setup, NULL, NULL);
+  if (cwd != NULL && cwd[0] != '\0')
+    g_subprocess_launcher_set_cwd(launcher, cwd);
 
   proc = g_subprocess_launcher_spawnv(launcher, (const gchar *const *)argv,
                                       &error);

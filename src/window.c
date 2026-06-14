@@ -22,6 +22,8 @@ static void on_provider_event(gpointer source, const ProviderEvent *event,
 static void on_set_provider(GSimpleAction *action, GVariant *state,
                             gpointer user_data);
 static void rebuild_provider_menu(GMenu *submenu, Tab *tab);
+static void rebuild_agent_menu(AppWindow *win, Tab *tab);
+static void rebuild_model_menu(AppWindow *win, Tab *tab);
 static void cancel_tab(Tab *tab);
 static void update_submit_sensitivity(Tab *tab);
 static char *get_trimmed_text(GtkWidget *text_view);
@@ -1076,6 +1078,8 @@ static void on_notebook_page_switched(GtkNotebook *notebook, GtkWidget *page,
                                     g_variant_new_string(tab->provider_name));
         if (win->provider_submenu != NULL)
           rebuild_provider_menu(win->provider_submenu, tab);
+        rebuild_agent_menu(win, tab);
+        rebuild_model_menu(win, tab);
       }
     }
   }
@@ -2152,6 +2156,7 @@ AppWindow *app_window_new(GtkApplication *app) {
           GMenu *section_menu = g_menu_new();
           char **opts;
 
+          win->agent_section_menu = section_menu;
           opts = runtime_config_get_string_list(win->config, "agent_options");
           if (opts == NULL)
             opts = g_strsplit(DEFAULT_AGENT_OPTIONS, ",", -1);
@@ -2201,6 +2206,7 @@ AppWindow *app_window_new(GtkApplication *app) {
           GMenu *section_menu = g_menu_new();
           char **opts;
 
+          win->model_section_menu = section_menu;
           opts = runtime_config_get_string_list(win->config, "model_options");
           if (opts == NULL)
             opts = g_strsplit(DEFAULT_MODEL_OPTIONS, ",", -1);
@@ -2223,12 +2229,20 @@ AppWindow *app_window_new(GtkApplication *app) {
         g_menu_append_submenu(section, "Model", G_MENU_MODEL(sub));
       }
 
-      /* ── Provider submenu (rebuild_provider_menu() updates labels) ── */
+      /* ── Provider submenu ──────────────────────────────────────── */
       win->provider_submenu = g_menu_new();
       rebuild_provider_menu(win->provider_submenu,
                             app_window_get_active_tab(win));
       g_menu_append_submenu(section, "Provider",
                             G_MENU_MODEL(win->provider_submenu));
+
+      /* Initial checkmark sync for agent and model sections */
+      {
+        Tab *active_tab = app_window_get_active_tab(win);
+
+        rebuild_agent_menu(win, active_tab);
+        rebuild_model_menu(win, active_tab);
+      }
 
       g_menu_append_submenu(menu, "Actions", G_MENU_MODEL(section));
     }
@@ -3637,8 +3651,10 @@ static void on_menu_cycle_agent_set(GSimpleAction *action, GVariant *param,
 
   (void)action;
   tab = app_window_get_active_tab(win);
-  if (tab != NULL && tab->agent_dropdown != NULL)
+  if (tab != NULL && tab->agent_dropdown != NULL) {
     set_selected_text(tab->agent_dropdown, g_variant_get_string(param, NULL));
+    rebuild_agent_menu(win, tab);
+  }
 }
 
 static void on_menu_cycle_model_set(GSimpleAction *action, GVariant *param,
@@ -3648,8 +3664,10 @@ static void on_menu_cycle_model_set(GSimpleAction *action, GVariant *param,
 
   (void)action;
   tab = app_window_get_active_tab(win);
-  if (tab != NULL && tab->model_dropdown != NULL)
+  if (tab != NULL && tab->model_dropdown != NULL) {
     set_selected_text(tab->model_dropdown, g_variant_get_string(param, NULL));
+    rebuild_model_menu(win, tab);
+  }
 }
 
 static void rebuild_provider_menu(GMenu *submenu, Tab *tab) {
@@ -3672,6 +3690,98 @@ static void rebuild_provider_menu(GMenu *submenu, Tab *tab) {
                                             g_variant_new_string(names[i]));
     g_menu_append_item(submenu, item);
   }
+}
+
+/* ── rebuild agent / model submenu sections with checkmarks ────── */
+
+static void rebuild_agent_menu(AppWindow *win, Tab *tab) {
+  char **opts;
+  int n;
+
+  if (win->agent_section_menu == NULL)
+    return;
+
+  n = g_menu_model_get_n_items(G_MENU_MODEL(win->agent_section_menu));
+  for (int i = n - 1; i >= 0; i--)
+    g_menu_remove(win->agent_section_menu, i);
+
+  opts = runtime_config_get_string_list(win->config, "agent_options");
+  if (opts == NULL)
+    opts = g_strsplit(DEFAULT_AGENT_OPTIONS, ",", -1);
+
+  for (int i = 0; opts[i] != NULL && opts[i][0] != '\0'; i++) {
+    GString *label;
+    GMenuItem *item;
+    GVariant *target;
+
+    label = g_string_new(opts[i]);
+    target = g_variant_new_string(opts[i]);
+
+    /* Checkmark prefix for selected agent */
+    if (tab != NULL && tab->agent_dropdown != NULL) {
+      g_autofree char *selected = get_selected_text(tab->agent_dropdown);
+
+      if (g_strcmp0(selected, opts[i]) == 0)
+        g_string_prepend(label, "\xe2\x9c\x93 ");
+      else
+        g_string_prepend(label, "  ");
+      g_free(selected);
+    } else {
+      g_string_prepend(label, "  ");
+    }
+
+    item = g_menu_item_new(label->str, NULL);
+    g_menu_item_set_action_and_target_value(item, "win.cycle_agent_set",
+                                            target);
+    g_menu_append_item(win->agent_section_menu, item);
+    g_string_free(label, TRUE);
+  }
+  g_strfreev(opts);
+}
+
+static void rebuild_model_menu(AppWindow *win, Tab *tab) {
+  char **opts;
+  int n;
+
+  if (win->model_section_menu == NULL)
+    return;
+
+  n = g_menu_model_get_n_items(G_MENU_MODEL(win->model_section_menu));
+  for (int i = n - 1; i >= 0; i--)
+    g_menu_remove(win->model_section_menu, i);
+
+  opts = runtime_config_get_string_list(win->config, "model_options");
+  if (opts == NULL)
+    opts = g_strsplit(DEFAULT_MODEL_OPTIONS, ",", -1);
+
+  for (int i = 0; opts[i] != NULL && opts[i][0] != '\0'; i++) {
+    GString *label;
+    GMenuItem *item;
+    GVariant *target;
+
+    label = g_string_new(opts[i]);
+    target = g_variant_new_string(opts[i]);
+
+    /* Checkmark prefix for selected model */
+    if (tab != NULL && tab->model_dropdown != NULL) {
+      g_autofree char *selected = get_selected_text(tab->model_dropdown);
+
+      if (g_strcmp0(selected, opts[i]) == 0)
+        g_string_prepend(label, "\xe2\x9c\x93 ");
+      else
+        g_string_prepend(label, "  ");
+      g_free(selected);
+    } else {
+      g_string_prepend(label, "  ");
+    }
+
+    item = g_menu_item_new(label->str, NULL);
+    g_menu_item_set_action_and_target_value(item, "win.cycle_model_set",
+                                            target);
+    g_menu_append_item(win->model_section_menu, item);
+    g_string_free(label, TRUE);
+  }
+  g_strfreev(opts);
 }
 
 static void on_set_provider(GSimpleAction *action, GVariant *state,

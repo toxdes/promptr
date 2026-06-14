@@ -19,6 +19,8 @@ typedef struct _AppWindow {
   GtkWidget *shortcuts_popup;
   GSimpleAction *provider_action;
   GMenu *provider_submenu;
+  GMenu *agent_section_menu;
+  GMenu *model_section_menu;
   FILE *log_file;
 
   gboolean destroyed;
