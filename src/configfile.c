@@ -41,7 +41,9 @@ static const ConfigDefault CONFIG_DEFAULTS[] = {
     {"opencode_path", OPENCODE_PATH, "# Path to the opencode binary"},
     {"provider", PROVIDER_DEFAULT, "# Backend provider (opencode, openrouter)"},
     {"openrouter_api_key", OPENROUTER_API_KEY_DEFAULT,
-     "# OpenRouter API key (or set OPENROUTER_API_KEY env var)"},
+     "# OpenRouter API key"
+     " (set OPENROUTER_API_KEY env var instead to keep it out of config "
+     "files)"},
     {"agent_options", DEFAULT_AGENT_OPTIONS,
      "# Agent dropdown options (comma-separated, first=default)"},
     {"model_options", DEFAULT_MODEL_OPTIONS,
@@ -204,6 +206,10 @@ static void write_default_config(const char *path) {
   content = g_string_new("# promptr runtime configuration\n"
                          "# Each key falls back to the compile-time"
                          " default if missing.\n"
+                         "# WARNING: This file may contain API keys."
+                         " Do NOT blindly commit to version control.\n"
+                         "# Use a .env file or env vars for CI/CD"
+                         " deployments.\n"
                          "\n"
                          "[preferences]\n");
 

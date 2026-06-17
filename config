@@ -1,5 +1,7 @@
 # promptr runtime configuration
 # Each key falls back to the compile-time default if missing.
+# WARNING: This file may contain API keys. Do NOT blindly commit to version control.
+# Use a .env file or env vars for CI/CD deployments.
 
 [preferences]
 # Window size in pixels
@@ -31,7 +33,7 @@ opencode_path=opencode
 # Backend provider (opencode, openrouter)
 provider=opencode
 
-# OpenRouter API key (or set OPENROUTER_API_KEY env var)
+# OpenRouter API key (set OPENROUTER_API_KEY env var instead to keep it out of config files)
 openrouter_api_key=
 
 # Agent dropdown options (comma-separated, first=default)
