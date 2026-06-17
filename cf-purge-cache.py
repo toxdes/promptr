@@ -4,21 +4,21 @@
 # dependencies = ["requests"]
 # ///
 
-"""Purge Cloudflare cache for packages.toxdes.com.
+"""Purge Cloudflare cache for a given hostname.
 
-Uses Cloudflare API to purge cache by hostname, so only
-packages.toxdes.com is affected (other hostnames on the
+Uses Cloudflare API to purge cache by hostname, so only the
+specified hostname is affected (other hostnames on the
 same zone are left untouched).
 
 Usage:
-    ./cf-purge-cache.py              # purge cache
-    ./cf-purge-cache.py --dry-run    # show what would happen
-    ./cf-purge-cache.py --check-ttl  # check current cache TTL settings
-    ./cf-purge-cache.py --set-ttl    # set cache TTL from env vars
+    ./cf-purge-cache.py <hostname>          # purge cache for hostname
+    ./cf-purge-cache.py <hostname> --dry-run
+    ./cf-purge-cache.py --check-ttl         # check current cache TTL settings
+    ./cf-purge-cache.py --set-ttl           # set cache TTL from env vars
 
 Environment (via --env PATH):
     CF_API_TOKEN             Cloudflare API token with Zone.Cache Purge
-    CF_ZONE_ID               Zone ID for packages.toxdes.com
+    CF_ZONE_ID               Zone ID for the domain
     CF_BROWSER_TTL           Browser cache TTL in seconds (for --set-ttl)
     CF_EDGE_TTL              Edge cache TTL in seconds (for --set-ttl)
 """
@@ -32,7 +32,6 @@ from pathlib import Path
 import requests
 
 API_BASE = "https://api.cloudflare.com/client/v4"
-HOSTNAME = "packages.toxdes.com"
 
 
 def load_env_file(path):
@@ -69,9 +68,36 @@ def check_required(*vars_):
         sys.exit(1)
 
 
-def purge_by_hostname(token, zone_id, dry_run):
+def clean_hostname(name):
+    name = name.strip()
+    name = name.removeprefix("http://")
+    name = name.removeprefix("https://")
+    return name.rstrip("/")
+
+
+def validate_hostname(name):
+    if not name:
+        print("Error: hostname is required", file=sys.stderr)
+        sys.exit(1)
+    if " " in name:
+        print("Error: hostname must not contain spaces", file=sys.stderr)
+        sys.exit(1)
+    if "/" in name or "?" in name or "#" in name:
+        print("Error: hostname must not contain a path", file=sys.stderr)
+        sys.exit(1)
+    if "." not in name:
+        print("Error: hostname must be a fully qualified domain name",
+              file=sys.stderr)
+        sys.exit(1)
+    if not all(c.isalnum() or c in ".-" for c in name):
+        print("Error: hostname contains invalid characters", file=sys.stderr)
+        sys.exit(1)
+    return name
+
+
+def purge_by_hostname(token, zone_id, hostname, dry_run):
     url = f"{API_BASE}/zones/{zone_id}/purge_cache"
-    body = {"hosts": [HOSTNAME]}
+    body = {"hosts": [hostname]}
     headers = _headers(token)
 
     if dry_run:
@@ -146,7 +172,9 @@ def _handle_response(resp, ok_msg):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Purge Cloudflare cache for packages.toxdes.com")
+        description="Purge Cloudflare cache for a hostname")
+    parser.add_argument("hostname", nargs="?",
+                        help="Hostname to purge cache for (required for purge)")
     parser.add_argument("--env", metavar="PATH",
                         help="Load env vars from file (KEY=VALUE per line)")
     parser.add_argument("--dry-run", action="store_true",
@@ -174,7 +202,9 @@ def main():
                      os.environ["CF_EDGE_TTL"])
         sys.exit(0 if ok else 1)
     else:
-        ok = purge_by_hostname(token, zone, args.dry_run)
+        hostname = clean_hostname(args.hostname or "")
+        hostname = validate_hostname(hostname)
+        ok = purge_by_hostname(token, zone, hostname, args.dry_run)
         sys.exit(0 if ok else 1)
 
 
