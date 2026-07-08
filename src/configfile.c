@@ -38,12 +38,7 @@ static const ConfigDefault CONFIG_DEFAULTS[] = {
     {"kb_shortcuts", KB_SHORTCUTS, NULL},
     {"kb_submit", KB_SUBMIT, NULL},
     {"kb_cancel", KB_CANCEL, NULL},
-    {"opencode_path", OPENCODE_PATH, "# Path to the opencode binary"},
     {"provider", PROVIDER_DEFAULT, "# Backend provider (opencode, openrouter)"},
-    {"openrouter_api_key", OPENROUTER_API_KEY_DEFAULT,
-     "# OpenRouter API key"
-     " (set OPENROUTER_API_KEY env var instead to keep it out of config "
-     "files)"},
     {"agent_options", DEFAULT_AGENT_OPTIONS,
      "# Agent dropdown options (comma-separated, first=default)"},
     {"model_options", DEFAULT_MODEL_OPTIONS,
