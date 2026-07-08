@@ -3725,7 +3725,6 @@ static void rebuild_agent_menu(AppWindow *win, Tab *tab) {
         g_string_prepend(label, "\xe2\x9c\x93 ");
       else
         g_string_prepend(label, "  ");
-      g_free(selected);
     } else {
       g_string_prepend(label, "  ");
     }
@@ -3770,7 +3769,6 @@ static void rebuild_model_menu(AppWindow *win, Tab *tab) {
         g_string_prepend(label, "\xe2\x9c\x93 ");
       else
         g_string_prepend(label, "  ");
-      g_free(selected);
     } else {
       g_string_prepend(label, "  ");
     }

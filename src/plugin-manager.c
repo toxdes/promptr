@@ -171,13 +171,15 @@ void plugin_manager_scan(void) {
 
     scan_dir(sys_dir);
   }
+
+  g_ptr_array_add(state.names, NULL);
 }
 
 const char *const *plugin_manager_get_providers(void) {
   if (state.manifests == NULL)
     plugin_manager_scan();
 
-  if (state.names->len == 0)
+  if (state.names == NULL || state.names->len <= 1)
     return NULL;
 
   return (const char *const *)state.names->pdata;
