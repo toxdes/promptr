@@ -45,7 +45,7 @@ ICONDIR    = $(DATADIR)/icons/hicolor/scalable/apps
 APPDIR     = $(DATADIR)/applications
 PLUGINSDIR = $(PREFIX)/lib/promptr/plugins
 
-SOURCES := $(wildcard $(SRCDIR)/*.c) $(wildcard $(SRCDIR)/providers/*.c)
+SOURCES := $(wildcard $(SRCDIR)/*.c)
 JSONRPC_SRC := lib/promptr-protocol/jsonrpc.c
 JSONRPC_OBJ := $(BUILDDIR)/jsonrpc.o
 OBJECTS := $(patsubst $(SRCDIR)/%.c,$(BUILDDIR)/%.o,$(SOURCES)) $(JSONRPC_OBJ)
@@ -107,6 +107,7 @@ uninstall:
 
 debug:
 	$(MAKE) BUILD=debug
+	$(MAKE) BUILD=debug providers
 
 release:
 	$(MAKE) BUILD=release
@@ -114,7 +115,8 @@ release:
 r:
 	$(MAKE) clean
 	$(MAKE) BUILD=debug
-	./promptr-debug
+	$(MAKE) BUILD=debug providers
+	PROMPTR_PLUGIN_DIR=providers ./promptr-debug
 
 config:
 	$(MAKE) clean
