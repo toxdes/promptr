@@ -51,46 +51,46 @@ static gboolean handle_cleanup(ProviderState *state, const char *tab_id);
 
 static void write_event(const char *tab_id, const char *type,
                         const char *output) {
-  g_autoptr(JsonBuilder) params = json_builder_new();
-  g_autoptr(JsonNode) event = NULL;
+  JsonBuilder *builder = json_builder_new();
+  JsonNode *p, *event;
 
-  json_builder_begin_object(params);
-  json_builder_set_member_name(params, "tab_id");
-  json_builder_add_string_value(params, tab_id != NULL ? tab_id : "");
-  json_builder_set_member_name(params, "type");
-  json_builder_add_string_value(params, type);
-  json_builder_set_member_name(params, "output");
-  json_builder_add_string_value(params, output != NULL ? output : "");
-  json_builder_end_object(params);
+  json_builder_begin_object(builder);
+  json_builder_set_member_name(builder, "tab_id");
+  json_builder_add_string_value(builder, tab_id != NULL ? tab_id : "");
+  json_builder_set_member_name(builder, "type");
+  json_builder_add_string_value(builder, type);
+  json_builder_set_member_name(builder, "output");
+  json_builder_add_string_value(builder, output != NULL ? output : "");
+  json_builder_end_object(builder);
 
-  {
-    JsonNode *p = json_builder_get_root(params);
-    event = json_rpc_make_notification("provider/event", p);
-  }
+  p = json_builder_get_root(builder);
+  event = json_rpc_make_notification("provider/event", p);
+  g_object_unref(builder);
 
   json_rpc_write(stdout, event, NULL);
+  json_node_free(event);
   fflush(stdout);
 }
 
 static void write_error_event(const char *tab_id, const char *msg) {
-  g_autoptr(JsonBuilder) params = json_builder_new();
-  g_autoptr(JsonNode) event = NULL;
+  JsonBuilder *builder = json_builder_new();
+  JsonNode *p, *event;
 
-  json_builder_begin_object(params);
-  json_builder_set_member_name(params, "tab_id");
-  json_builder_add_string_value(params, tab_id != NULL ? tab_id : "");
-  json_builder_set_member_name(params, "type");
-  json_builder_add_string_value(params, "error");
-  json_builder_set_member_name(params, "error_msg");
-  json_builder_add_string_value(params, msg != NULL ? msg : "");
-  json_builder_end_object(params);
+  json_builder_begin_object(builder);
+  json_builder_set_member_name(builder, "tab_id");
+  json_builder_add_string_value(builder, tab_id != NULL ? tab_id : "");
+  json_builder_set_member_name(builder, "type");
+  json_builder_add_string_value(builder, "error");
+  json_builder_set_member_name(builder, "error_msg");
+  json_builder_add_string_value(builder, msg != NULL ? msg : "");
+  json_builder_end_object(builder);
 
-  {
-    JsonNode *p = json_builder_get_root(params);
-    event = json_rpc_make_notification("provider/event", p);
-  }
+  p = json_builder_get_root(builder);
+  event = json_rpc_make_notification("provider/event", p);
+  g_object_unref(builder);
 
   json_rpc_write(stdout, event, NULL);
+  json_node_free(event);
   fflush(stdout);
 }
 
@@ -218,7 +218,7 @@ static gboolean on_child_stdout(GIOChannel *source, GIOCondition cond,
   g_autoptr(GError) error = NULL;
 
   if (cond & (G_IO_HUP | G_IO_ERR | G_IO_NVAL)) {
-    g_warning("opencode-provider: child stdout closed");
+    state->child_stdout_watch = 0;
     return G_SOURCE_REMOVE;
   }
 

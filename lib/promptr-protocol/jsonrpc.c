@@ -75,7 +75,7 @@ gboolean json_rpc_write(FILE *stream, JsonNode *msg, GError **error) {
 
 JsonNode *json_rpc_make_request(const char *method, JsonNode *params, int id) {
   JsonBuilder *b = json_builder_new();
-  JsonNode *root;
+  JsonNode *root, *result;
 
   json_builder_begin_object(b);
   json_builder_set_member_name(b, "jsonrpc");
@@ -91,13 +91,14 @@ JsonNode *json_rpc_make_request(const char *method, JsonNode *params, int id) {
   json_builder_end_object(b);
 
   root = json_builder_get_root(b);
+  result = json_node_copy(root);
   g_object_unref(b);
-  return root;
+  return result;
 }
 
 JsonNode *json_rpc_make_response(JsonNode *result, int id) {
   JsonBuilder *b = json_builder_new();
-  JsonNode *root;
+  JsonNode *root, *res;
 
   json_builder_begin_object(b);
   json_builder_set_member_name(b, "jsonrpc");
@@ -109,13 +110,14 @@ JsonNode *json_rpc_make_response(JsonNode *result, int id) {
   json_builder_end_object(b);
 
   root = json_builder_get_root(b);
+  res = json_node_copy(root);
   g_object_unref(b);
-  return root;
+  return res;
 }
 
 JsonNode *json_rpc_make_error(int code, const char *message, int id) {
   JsonBuilder *b = json_builder_new();
-  JsonNode *root;
+  JsonNode *root, *res;
 
   json_builder_begin_object(b);
   json_builder_set_member_name(b, "jsonrpc");
@@ -132,13 +134,14 @@ JsonNode *json_rpc_make_error(int code, const char *message, int id) {
   json_builder_end_object(b);
 
   root = json_builder_get_root(b);
+  res = json_node_copy(root);
   g_object_unref(b);
-  return root;
+  return res;
 }
 
 JsonNode *json_rpc_make_notification(const char *method, JsonNode *params) {
   JsonBuilder *b = json_builder_new();
-  JsonNode *root;
+  JsonNode *root, *res;
 
   json_builder_begin_object(b);
   json_builder_set_member_name(b, "jsonrpc");
@@ -152,13 +155,14 @@ JsonNode *json_rpc_make_notification(const char *method, JsonNode *params) {
   json_builder_end_object(b);
 
   root = json_builder_get_root(b);
+  res = json_node_copy(root);
   g_object_unref(b);
-  return root;
+  return res;
 }
 
 JsonNode *json_rpc_make_ok(int id) {
   JsonBuilder *b = json_builder_new();
-  JsonNode *root;
+  JsonNode *root, *res;
 
   json_builder_begin_object(b);
   json_builder_set_member_name(b, "jsonrpc");
@@ -173,8 +177,9 @@ JsonNode *json_rpc_make_ok(int id) {
   json_builder_end_object(b);
 
   root = json_builder_get_root(b);
+  res = json_node_copy(root);
   g_object_unref(b);
-  return root;
+  return res;
 }
 
 /* ── accessors ─────────────────────────────────────────── */
