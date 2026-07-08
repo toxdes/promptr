@@ -46,7 +46,9 @@ APPDIR     = $(DATADIR)/applications
 PLUGINSDIR = $(PREFIX)/lib/promptr/plugins
 
 SOURCES := $(wildcard $(SRCDIR)/*.c) $(wildcard $(SRCDIR)/providers/*.c)
-OBJECTS := $(patsubst $(SRCDIR)/%.c,$(BUILDDIR)/%.o,$(SOURCES))
+JSONRPC_SRC := lib/promptr-protocol/jsonrpc.c
+JSONRPC_OBJ := $(BUILDDIR)/jsonrpc.o
+OBJECTS := $(patsubst $(SRCDIR)/%.c,$(BUILDDIR)/%.o,$(SOURCES)) $(JSONRPC_OBJ)
 DEPS    := $(OBJECTS:.o=.d)
 
 $(TARGET): $(OBJECTS)
@@ -54,6 +56,9 @@ $(TARGET): $(OBJECTS)
 
 $(BUILDDIR)/%.o: $(SRCDIR)/%.c | $(BUILDDIR)
 	$(CC) $(CFLAGS) -MMD -MP -MF $(BUILDDIR)/$*.d -c $< -o $@
+
+$(JSONRPC_OBJ): $(JSONRPC_SRC)
+	$(CC) $(CFLAGS) -MMD -MP -MF $(BUILDDIR)/jsonrpc.d -c $< -o $@
 
 $(BUILDDIR):
 	mkdir -p $(BUILDDIR) $(BUILDDIR)/providers

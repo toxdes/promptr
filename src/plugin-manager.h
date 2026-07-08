@@ -7,7 +7,8 @@
 typedef struct {
   char *name;
   char *version;
-  char *command;
+  char *command;      /* command name from manifest */
+  char *command_path; /* resolved absolute path, or NULL */
   char *description;
   char *homepage;
   char *type;

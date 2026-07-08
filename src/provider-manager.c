@@ -1,6 +1,8 @@
 #include "provider-manager.h"
 #include "config.h"
 #include "configfile.h"
+#include "plugin-manager.h"
+#include "plugin-runner.h"
 #include "provider.h"
 #include "providers/opencode.h"
 #include "providers/openrouter.h"
@@ -31,6 +33,22 @@ Provider *provider_manager_create_named(RuntimeConfig *config, const char *name,
   if (name == NULL || name[0] == '\0')
     name = PROVIDER_DEFAULT;
 
+  /* Try plugin-manager first — resolves from plugin manifests */
+  {
+    PluginManifest *manifest = plugin_manager_get_manifest(name);
+    const char *cmd;
+
+    if (manifest != NULL) {
+      cmd = manifest->command_path != NULL ? manifest->command_path
+                                           : manifest->command;
+      p = plugin_runner_create(cmd, config, error);
+      if (p != NULL)
+        return p;
+      /* Plugin runner failed — fall through to KNOWN_PROVIDERS */
+    }
+  }
+
+  /* Fall back to compiled-in providers */
   p = g_new0(Provider, 1);
   p->vtable = NULL;
 
@@ -85,7 +103,6 @@ Provider *provider_manager_create_or_fallback(RuntimeConfig *config,
   /* Fall back to opencode (always available, no deps) */
   p = provider_manager_create_named(config, "opencode", &error);
   if (p == NULL) {
-    /* This should never happen, but if it does, last resort */
     if (out_error_msg != NULL)
       *out_error_msg = g_strdup(error != NULL ? error->message : "unknown");
     g_clear_error(&error);
@@ -106,15 +123,37 @@ void provider_manager_destroy(Provider *provider) {
 }
 
 const char *const *provider_manager_get_names(void) {
-  static const char *names[G_N_ELEMENTS(KNOWN_PROVIDERS) + 1];
-  static gboolean inited = FALSE;
+  static const char **names = NULL;
+  GPtrArray *arr;
+  gboolean seen_opencode = FALSE, seen_openrouter = FALSE;
 
-  if (!inited) {
-    for (size_t i = 0; i < G_N_ELEMENTS(KNOWN_PROVIDERS); i++)
-      names[i] = KNOWN_PROVIDERS[i].name;
-    names[G_N_ELEMENTS(KNOWN_PROVIDERS)] = NULL;
-    inited = TRUE;
+  if (names != NULL)
+    return names;
+
+  arr = g_ptr_array_new();
+
+  /* Add plugin-manager providers first */
+  {
+    const char *const *plugin_names = plugin_manager_get_providers();
+
+    if (plugin_names != NULL) {
+      for (int i = 0; plugin_names[i] != NULL; i++) {
+        g_ptr_array_add(arr, g_strdup(plugin_names[i]));
+        if (g_strcmp0(plugin_names[i], "opencode") == 0)
+          seen_opencode = TRUE;
+        if (g_strcmp0(plugin_names[i], "openrouter") == 0)
+          seen_openrouter = TRUE;
+      }
+    }
   }
 
+  /* Add compiled-in providers not already in plugin list */
+  if (!seen_opencode)
+    g_ptr_array_add(arr, g_strdup("opencode"));
+  if (!seen_openrouter)
+    g_ptr_array_add(arr, g_strdup("openrouter"));
+
+  g_ptr_array_add(arr, NULL);
+  names = (const char **)g_ptr_array_free(arr, FALSE);
   return names;
 }

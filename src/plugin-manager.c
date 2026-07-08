@@ -1,4 +1,5 @@
 #include "plugin-manager.h"
+#include "config.h"
 #include "configfile.h"
 #include <errno.h>
 #include <string.h>
@@ -18,6 +19,7 @@ static void manifest_free(gpointer data) {
   g_free(m->name);
   g_free(m->version);
   g_free(m->command);
+  g_free(m->command_path);
   g_free(m->description);
   g_free(m->homepage);
   g_free(m->type);
@@ -54,6 +56,17 @@ static PluginManifest *manifest_parse(const char *path) {
   m = g_new0(PluginManifest, 1);
   m->name = g_strdup(json_object_get_string_member(obj, "name"));
   m->command = g_strdup(json_object_get_string_member(obj, "command"));
+
+  /* Resolve command to absolute path */
+  {
+    g_autofree char *dir = g_path_get_dirname(path);
+    g_autofree char *resolved = g_build_filename(dir, m->command, NULL);
+
+    if (g_file_test(resolved, G_FILE_TEST_IS_EXECUTABLE))
+      m->command_path = g_steal_pointer(&resolved);
+    else if (g_path_is_absolute(m->command))
+      m->command_path = g_strdup(m->command);
+  }
 
   if (json_object_has_member(obj, "version"))
     m->version = g_strdup(json_object_get_string_member(obj, "version"));
