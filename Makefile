@@ -38,11 +38,12 @@ LDFLAGS := $(GTK_LIBS) $(LSH_LIBS) $(SV_LIBS) $(CURL_LIBS) $(JSON_LIBS)
 SRCDIR   := src
 BUILDDIR := build/$(BUILD)
 
-PREFIX ?= /usr/local
-BINDIR  = $(PREFIX)/bin
-DATADIR = $(PREFIX)/share
-ICONDIR = $(DATADIR)/icons/hicolor/scalable/apps
-APPDIR  = $(DATADIR)/applications
+PREFIX    ?= /usr/local
+BINDIR     = $(PREFIX)/bin
+DATADIR    = $(PREFIX)/share
+ICONDIR    = $(DATADIR)/icons/hicolor/scalable/apps
+APPDIR     = $(DATADIR)/applications
+PLUGINSDIR = $(PREFIX)/lib/promptr/plugins
 
 SOURCES := $(wildcard $(SRCDIR)/*.c) $(wildcard $(SRCDIR)/providers/*.c)
 OBJECTS := $(patsubst $(SRCDIR)/%.c,$(BUILDDIR)/%.o,$(SOURCES))
@@ -61,17 +62,43 @@ $(BUILDDIR):
 
 clean:
 	rm -rf build dist promptr promptr-debug
+	@for d in $(PROVIDERS_DIR)/promptr-*/; do \
+	  if [ -d "$$d" ]; then $(MAKE) -C "$$d" clean; fi; \
+	done
 
-install: $(TARGET)
+PROVIDERS_DIR := providers
+
+PROVIDER_BINS := \
+	$(PROVIDERS_DIR)/promptr-opencode/promptr-opencode \
+	$(PROVIDERS_DIR)/promptr-openrouter/promptr-openrouter
+
+$(PROVIDERS_DIR)/promptr-opencode/promptr-opencode:
+	$(MAKE) -C $(PROVIDERS_DIR)/promptr-opencode
+
+$(PROVIDERS_DIR)/promptr-openrouter/promptr-openrouter:
+	$(MAKE) -C $(PROVIDERS_DIR)/promptr-openrouter
+
+providers: $(PROVIDER_BINS)
+
+install: $(TARGET) providers
 	install -D -m755 $(TARGET) $(DESTDIR)$(BINDIR)/$(TARGET)
 	install -D -m644 data/promptr.svg $(DESTDIR)$(ICONDIR)/promptr.svg
 	install -D -m644 com.toxdes.promptr.desktop $(DESTDIR)$(APPDIR)/com.toxdes.promptr.desktop
 	rm -f $(DESTDIR)$(APPDIR)/promptr.desktop
 
+	# Install provider plugins
+	for p in opencode openrouter; do \
+	  dir="$(DESTDIR)$(PLUGINSDIR)/$$p"; \
+	  mkdir -p "$$dir"; \
+	  install -m755 "$(PROVIDERS_DIR)/promptr-$$p/promptr-$$p" "$$dir/"; \
+	  install -m644 "$(PROVIDERS_DIR)/promptr-$$p/plugin.json" "$$dir/"; \
+	done
+
 uninstall:
 	rm -f $(DESTDIR)$(BINDIR)/$(TARGET)
+	rm -rf $(DESTDIR)$(PLUGINSDIR)
 
-.PHONY: clean install uninstall debug release r config
+.PHONY: clean install uninstall debug release r config providers
 
 debug:
 	$(MAKE) BUILD=debug
