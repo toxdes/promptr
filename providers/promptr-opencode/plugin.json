@@ -1,0 +1,21 @@
+{
+  "name": "opencode",
+  "version": "1.0.0",
+  "command": "promptr-opencode",
+  "description": "OpenCode CLI provider",
+  "type": "provider",
+  "methods": [
+    "provider/initialize",
+    "provider/submit",
+    "provider/cancel",
+    "provider/cleanup_session",
+    "provider/shutdown"
+  ],
+  "config_schema": {
+    "opencode_path": {
+      "type": "string",
+      "default": "opencode",
+      "comment": "Path to the opencode binary"
+    }
+  }
+}
