@@ -24,6 +24,31 @@ rpm = ["*.rpm"]
 archive = ["*.tar.gz"]
 appimage = ["*.AppImage"]
 
+[package]
+binary = "promptr"
+
+[package.deb]
+assets = [
+  { source = "data/promptr.svg", dest = "usr/share/icons/hicolor/scalable/apps/promptr.svg", mode = 420 },
+  { source = "com.toxdes.promptr.desktop", dest = "usr/share/applications/com.toxdes.promptr.desktop", mode = 420 },
+]
+
+[package.rpm]
+assets = [
+  { source = "data/promptr.svg", dest = "usr/share/icons/hicolor/scalable/apps/promptr.svg", mode = 420 },
+  { source = "com.toxdes.promptr.desktop", dest = "usr/share/applications/com.toxdes.promptr.desktop", mode = 420 },
+]
+
+[package.archive]
+assets = [
+  { source = "data/promptr.svg", dest = "usr/share/icons/hicolor/scalable/apps/promptr.svg", mode = 420 },
+  { source = "com.toxdes.promptr.desktop", dest = "usr/share/applications/com.toxdes.promptr.desktop", mode = 420 },
+]
+
+[package.appimage]
+icon = "data/promptr.svg"
+desktop = "com.toxdes.promptr.desktop"
+
 [deb]
 package_name = "promptr"
 section = "utils"
