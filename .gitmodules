@@ -1,0 +1,3 @@
+[submodule "yesb"]
+	path = yesb
+	url = git@github.com:toxdes/yesb.git

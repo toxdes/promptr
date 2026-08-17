@@ -31,7 +31,7 @@ COPY . /build
 WORKDIR /build
 
 RUN make clean && make BUILD=${BUILD}
-RUN mkdir -p /output && python3 scripts/package.py
+RUN mkdir -p /output && python3 yesb/package.py
 
 FROM scratch
 COPY --from=builder /output /
