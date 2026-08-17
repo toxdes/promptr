@@ -1,0 +1,74 @@
+[project]
+id = "promptr"
+name = "Promptr"
+version_file = "VERSION"
+description = "GTK4 overlay prompt for opencode"
+homepage = "https://github.com/toxdes/promptr"
+repository = "https://github.com/toxdes/promptr"
+license = "MIT"
+maintainer = "toxdes <hi@toxdes.com>"
+
+[build]
+dockerfile = "Dockerfile"
+context = "."
+output_dir = "dist"
+platforms = ["linux/amd64", "linux/arm64"]
+
+[build.args]
+BUILD = "release"
+INCLUDE_APPIMAGE = "0"
+
+[artifacts]
+deb = ["*.deb"]
+rpm = ["*.rpm"]
+archive = ["*.tar.gz"]
+appimage = ["*.AppImage"]
+
+[deb]
+package_name = "promptr"
+section = "utils"
+priority = "optional"
+architectures = ["amd64", "arm64"]
+depends = [
+  "libgtk-4-1",
+  "libgtksourceview-5-0",
+  "libgtk4-layer-shell0",
+]
+
+[rpm]
+package_name = "promptr"
+release = "1"
+architectures = ["x86_64", "aarch64"]
+requires = [
+  "gtk4",
+  "gtksourceview5",
+  "gtk4-layer-shell",
+]
+
+[aur]
+binary_package = "promptr-bin"
+git_package = "promptr-git"
+architectures = ["x86_64", "aarch64"]
+depends = ["gtk4", "gtksourceview5", "gtk4-layer-shell"]
+git_pkgbuild = "PKGBUILD"
+
+[hosting]
+public_base_url = "https://packages.toxdes.com"
+apt_prefix = "apt"
+rpm_prefix = "rpm"
+release_prefix = "releases"
+
+[hosting.apt]
+suite = "stable"
+component = "main"
+origin = "toxdes"
+label = "promptr"
+
+[hosting.signing]
+gpg_key_env = "GPG_KEY_ID"
+gpg_passphrase_env = "GPG_PASSPHRASE"
+
+[hosting.aur]
+host = "aur.archlinux.org"
+ssh_user = "aur"
+maintainer = "toxdes <hi@toxdes.com>"
