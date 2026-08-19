@@ -11,13 +11,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 ARG TARGETARCH
+ARG VERSION
+ARG GIT_SHA=unknown
 ARG BUILD=release
-ARG INCLUDE_APPIMAGE
+ARG INCLUDE_APPIMAGE=0
 ENV TARGETARCH=${TARGETARCH}
 ENV BUILD=${BUILD}
 ENV INCLUDE_APPIMAGE=${INCLUDE_APPIMAGE}
 
-RUN if [ -n "$INCLUDE_APPIMAGE" ]; then \
+RUN if [ "$INCLUDE_APPIMAGE" = "1" ]; then \
       apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates squashfs-tools && \
       update-ca-certificates && \

@@ -29,20 +29,20 @@ binary = "promptr"
 
 [package.deb]
 assets = [
-  { source = "data/promptr.svg", dest = "usr/share/icons/hicolor/scalable/apps/promptr.svg", mode = 420 },
-  { source = "com.toxdes.promptr.desktop", dest = "usr/share/applications/com.toxdes.promptr.desktop", mode = 420 },
+  { source = "data/promptr.svg", dest = "/usr/share/icons/hicolor/scalable/apps/promptr.svg", mode = 420 },
+  { source = "com.toxdes.promptr.desktop", dest = "/usr/share/applications/com.toxdes.promptr.desktop", mode = 420 },
 ]
 
 [package.rpm]
 assets = [
-  { source = "data/promptr.svg", dest = "usr/share/icons/hicolor/scalable/apps/promptr.svg", mode = 420 },
-  { source = "com.toxdes.promptr.desktop", dest = "usr/share/applications/com.toxdes.promptr.desktop", mode = 420 },
+  { source = "data/promptr.svg", dest = "/usr/share/icons/hicolor/scalable/apps/promptr.svg", mode = 420 },
+  { source = "com.toxdes.promptr.desktop", dest = "/usr/share/applications/com.toxdes.promptr.desktop", mode = 420 },
 ]
 
 [package.archive]
 assets = [
-  { source = "data/promptr.svg", dest = "usr/share/icons/hicolor/scalable/apps/promptr.svg", mode = 420 },
-  { source = "com.toxdes.promptr.desktop", dest = "usr/share/applications/com.toxdes.promptr.desktop", mode = 420 },
+  { source = "data/promptr.svg", dest = "/usr/share/icons/hicolor/scalable/apps/promptr.svg", mode = 420 },
+  { source = "com.toxdes.promptr.desktop", dest = "/usr/share/applications/com.toxdes.promptr.desktop", mode = 420 },
 ]
 
 [package.appimage]
