@@ -22,51 +22,32 @@ static void child_setup(gpointer user_data) {
 static void communicate_cb(GObject *source, GAsyncResult *result,
                            gpointer user_data);
 
-static char **build_argv(const char *opencode_bin, const char *model,
-                         const char *agent, const char *query,
-                         const char *workdir, gboolean follow_up);
-
-void command_execute(Tab *tab, const char *model, const char *agent,
-                     const char *query, const char *workdir,
-                     const char *opencode_bin, gboolean follow_up,
-                     CommandCallback callback) {
+void command_execute_argv(Tab *tab, char **argv, const char *cwd,
+                          CommandCallback callback) {
   GSubprocessLauncher *launcher;
   GSubprocess *proc;
   GError *error = NULL;
-  char **argv;
   struct CallbackData *cbdata;
-
-  argv = build_argv(opencode_bin, model, agent, query, workdir, follow_up);
 
   launcher = g_subprocess_launcher_new(G_SUBPROCESS_FLAGS_STDOUT_PIPE |
                                        G_SUBPROCESS_FLAGS_STDERR_PIPE);
   g_subprocess_launcher_set_child_setup(launcher, child_setup, NULL, NULL);
+  if (cwd != NULL && cwd[0] != '\0')
+    g_subprocess_launcher_set_cwd(launcher, cwd);
 
   proc = g_subprocess_launcher_spawnv(launcher, (const gchar *const *)argv,
                                       &error);
 
   g_object_unref(launcher);
-  g_strfreev(argv);
 
   if (proc == NULL) {
     g_autofree char *errmsg = NULL;
     g_autofree char *stripped = NULL;
-    g_autofree char *cfg_path = NULL;
 
-    cfg_path = g_build_filename(g_get_user_config_dir(), DATA_DIR_SUFFIX,
-                                "config", NULL);
     stripped = g_strdup(error->message);
     g_strstrip(stripped);
 
-    errmsg = g_strdup_printf(
-        "Could not run opencode\n"
-        "\n"
-        "Binary path: %s (loaded from config at: %s)\n"
-        "Error: %s\n"
-        "\n"
-        "Install opencode from: https://opencode.ai/docs#install\n"
-        "You may need to update `opencode_path` in your config (%s).\n",
-        opencode_bin, cfg_path, stripped, cfg_path);
+    errmsg = g_strdup_printf("Could not run command\nError: %s\n", stripped);
     if (callback != NULL)
       callback(tab, NULL, errmsg, 0, -1, TRUE);
     g_error_free(error);
@@ -183,42 +164,4 @@ static void communicate_cb(GObject *source, GAsyncResult *result,
     callback(tab, stdout_str != NULL ? stdout_str : "",
              stderr_str != NULL ? stderr_str : "", elapsed, exit_code, TRUE);
   tab_unref(tab);
-}
-
-static char **build_argv(const char *opencode_bin, const char *model,
-                         const char *agent, const char *query,
-                         const char *workdir, gboolean follow_up) {
-  GPtrArray *args;
-
-  args = g_ptr_array_new();
-  g_ptr_array_add(args, g_strdup(opencode_bin));
-  g_ptr_array_add(args, g_strdup("run"));
-
-  if (follow_up)
-    g_ptr_array_add(args, g_strdup("--continue"));
-
-  if (workdir != NULL && workdir[0] != '\0') {
-    g_ptr_array_add(args, g_strdup("--dir"));
-    g_ptr_array_add(args, g_strdup(workdir));
-  }
-
-  if (model != NULL && g_strcmp0(model, "None") != 0 && model[0] != '\0') {
-    g_ptr_array_add(args, g_strdup("--model"));
-    g_ptr_array_add(args, g_strdup(model));
-  }
-
-  if (agent != NULL && g_strcmp0(agent, "None") != 0 && agent[0] != '\0') {
-    g_ptr_array_add(args, g_strdup("--agent"));
-    g_ptr_array_add(args, g_strdup(agent));
-  }
-
-  g_ptr_array_add(args, g_strdup("--"));
-  if (query != NULL)
-    g_ptr_array_add(args, g_strdup(query));
-  else
-    g_ptr_array_add(args, g_strdup(""));
-
-  g_ptr_array_add(args, NULL);
-
-  return (char **)g_ptr_array_free(args, FALSE);
 }

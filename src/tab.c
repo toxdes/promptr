@@ -1,6 +1,7 @@
 #include "tab.h"
 #include "command.h"
 #include "config.h"
+#include "provider-manager.h"
 #include "window.h"
 #include <gio/gio.h>
 #include <stdlib.h>
@@ -15,6 +16,9 @@ static char *tabs_dir(void) {
   return g_strdup(dir);
 }
 
+/* Only show one provider-error dialog per session */
+static gboolean provider_error_shown = FALSE;
+
 static char *tmp_root(void) {
   const char *data_dir;
   g_autofree char *dir = NULL;
@@ -24,6 +28,54 @@ static char *tmp_root(void) {
   g_mkdir_with_parents(dir, 0700);
   return g_strdup(dir);
 }
+
+/* ── conversation history helpers ─────────────────────────────── */
+
+void tab_history_add(Tab *tab, ProviderRole role, const char *content) {
+  if (tab == NULL || content == NULL)
+    return;
+  if (tab->n_messages >= tab->messages_cap) {
+    tab->messages_cap = tab->messages_cap == 0 ? 8 : tab->messages_cap * 2;
+    tab->messages = g_renew(ProviderMessage, tab->messages, tab->messages_cap);
+  }
+  tab->messages[tab->n_messages].role = role;
+  tab->messages[tab->n_messages].content = g_strdup(content);
+  tab->n_messages++;
+}
+
+void tab_history_clear(Tab *tab) {
+  if (tab == NULL)
+    return;
+  for (int i = 0; i < tab->n_messages; i++)
+    g_free(tab->messages[i].content);
+  g_free(tab->messages);
+  tab->messages = NULL;
+  tab->n_messages = 0;
+  tab->messages_cap = 0;
+}
+
+char *tab_history_render_display(Tab *tab, const char *current_output) {
+  GString *s;
+  int n_pairs;
+
+  if (tab == NULL)
+    return g_strdup(current_output != NULL ? current_output : "");
+
+  s = g_string_new(current_output != NULL ? current_output : "");
+  n_pairs = tab->n_messages / 2;
+
+  for (int i = n_pairs - 2; i >= 0; i--) {
+    const char *q = tab->messages[i * 2].content;
+    const char *a = tab->messages[i * 2 + 1].content;
+
+    g_string_append_printf(s, "\n---\nQ.%d: %s\nA: %s", i + 1,
+                           q != NULL ? q : "", a != NULL ? a : "");
+  }
+
+  return g_string_free(s, FALSE);
+}
+
+/* ── tab lifecycle ────────────────────────────────────────────── */
 
 Tab *tab_new(AppWindow *win, const char *name) {
   Tab *tab;
@@ -44,6 +96,31 @@ Tab *tab_new(AppWindow *win, const char *name) {
     tab->tmpdir_path = g_build_filename(root, tab->id, NULL);
   }
 
+  /* Create per-tab provider from config */
+  {
+    g_autofree char *err_msg = NULL;
+
+    if (win != NULL && win->config != NULL) {
+      tab->provider_name =
+          runtime_config_get_string(win->config, "provider", PROVIDER_DEFAULT);
+      tab->provider = provider_manager_create_or_fallback(
+          win->config, tab->provider_name, &err_msg);
+      if (err_msg != NULL) {
+        g_warning("Provider '%s' for new tab failed, fell back to opencode: %s",
+                  tab->provider_name, err_msg);
+        g_free(tab->provider_name);
+        tab->provider_name = g_strdup("opencode");
+      }
+    }
+
+    if (err_msg != NULL && win != NULL && win->window != NULL &&
+        !provider_error_shown) {
+      provider_error_shown = TRUE;
+      show_error_dialog(GTK_WINDOW(win->window), "Provider Not Available",
+                        err_msg);
+    }
+  }
+
   return tab;
 }
 
@@ -57,11 +134,23 @@ static void tab_free(Tab *tab) {
   if (tab == NULL)
     return;
 
-  if (tab->subprocess != NULL) {
+  if (tab->subprocess != NULL)
     command_cancel(tab);
-    g_clear_object(&tab->subprocess);
-    g_clear_object(&tab->cancellable);
-  }
+
+  g_clear_object(&tab->cancellable);
+  g_clear_object(&tab->subprocess);
+
+  /* Notify provider to clean up per-tab state (tmpdir, active_tab, etc.) */
+  if (tab->provider != NULL && tab->provider->vtable->cleanup_session != NULL)
+    tab->provider->vtable->cleanup_session(tab->provider->impl, tab);
+
+  /* Destroy the per-tab provider */
+  if (tab->provider != NULL)
+    provider_manager_destroy(tab->provider);
+
+  for (int i = 0; i < tab->n_messages; i++)
+    g_free(tab->messages[i].content);
+  g_free(tab->messages);
 
   g_list_free_full(tab->qa_history, g_free);
   g_free(tab->id);
@@ -70,6 +159,7 @@ static void tab_free(Tab *tab) {
   g_free(tab->tmpdir_path);
   g_free(tab->last_query);
   g_free(tab->last_output);
+  g_free(tab->provider_name);
   g_free(tab->cmd_string);
   g_free(tab->marked_lines_str);
 
@@ -106,8 +196,6 @@ void tab_save(Tab *tab) {
   g_autofree char *txt_path = NULL;
   g_autofree char *data = NULL;
   g_autoptr(GKeyFile) kf = NULL;
-  GList *l;
-  int turn;
   char timestr[64];
   time_t now;
   struct tm tm;
@@ -119,12 +207,14 @@ void tab_save(Tab *tab) {
   conf_path = g_strdup_printf("%s/%s.conf", dir, tab->id);
 
   kf = g_key_file_new();
-  g_key_file_set_integer(kf, "tab", "version", 1);
+  g_key_file_set_integer(kf, "tab", "version", 2);
   g_key_file_set_string(kf, "tab", "name", tab->name);
   g_key_file_set_integer(kf, "tab", "layout", tab->layout_mode);
   g_key_file_set_boolean(kf, "tab", "is_open", tab->is_open);
   g_key_file_set_boolean(kf, "tab", "has_activity", tab->has_activity);
   g_key_file_set_boolean(kf, "tab", "follow_up", tab->follow_up);
+  if (tab->provider_name != NULL)
+    g_key_file_set_string(kf, "tab", "provider", tab->provider_name);
 
   {
     char *agent, *model;
@@ -146,35 +236,26 @@ void tab_save(Tab *tab) {
   strftime(timestr, sizeof(timestr), "%Y-%m-%dT%H:%M:%SZ", &tm);
   g_key_file_set_string(kf, "tab", "time", timestr);
 
-  g_key_file_set_string(kf, "follow_up", "last_query",
-                        tab->last_query != NULL ? tab->last_query : "");
-  g_key_file_set_string(kf, "follow_up", "last_output",
-                        tab->last_output != NULL ? tab->last_output : "");
-  g_key_file_set_integer(kf, "follow_up", "turn", tab->follow_up_turn);
+  g_key_file_set_integer(kf, "messages", "count", tab->n_messages);
+  for (int i = 0; i < tab->n_messages; i++) {
+    g_autofree char *group = g_strdup_printf("msg_%d", i);
+    const char *role_str;
 
-  turn = tab->follow_up_turn;
-  for (l = tab->qa_history; l != NULL; l = l->next) {
-    g_autofree char *group = NULL;
-    const char *block;
-    char *sep, *newline;
-    g_autofree char *query = NULL;
-    g_autofree char *output = NULL;
-
-    block = (const char *)l->data;
-    sep = strstr(block, ": ");
-    newline = sep != NULL ? strstr(sep, "\nA: ") : NULL;
-    if (sep != NULL && newline != NULL) {
-      query = g_strndup(sep + 2, newline - sep - 2);
-      output = g_strdup(newline + 4);
-    } else {
-      query = g_strdup(block);
-      output = g_strdup("");
+    switch (tab->messages[i].role) {
+    case PROVIDER_ROLE_ASSISTANT:
+      role_str = "assistant";
+      break;
+    case PROVIDER_ROLE_SYSTEM:
+      role_str = "system";
+      break;
+    default:
+      role_str = "user";
+      break;
     }
-
-    turn--;
-    group = g_strdup_printf("history_%d", turn);
-    g_key_file_set_string(kf, group, "query", query);
-    g_key_file_set_string(kf, group, "output", output);
+    g_key_file_set_string(kf, group, "role", role_str);
+    g_key_file_set_string(
+        kf, group, "content",
+        tab->messages[i].content != NULL ? tab->messages[i].content : "");
   }
 
   data = g_key_file_to_data(kf, NULL, NULL);
@@ -226,8 +307,7 @@ Tab *tab_load(AppWindow *win, const char *uuid) {
   g_autofree char *text = NULL;
   Tab *tab;
   int layout;
-  int turn;
-  int i;
+  int version;
   GtkWidget *page;
   GtkWidget *label_widget;
 
@@ -258,6 +338,40 @@ Tab *tab_load(AppWindow *win, const char *uuid) {
     tab->tmpdir_path = g_build_filename(root, tab->id, NULL);
   }
 
+  /* Read per-tab provider name from saved state, fall back to config */
+  {
+    g_autofree char *saved = g_key_file_get_string(kf, "tab", "provider", NULL);
+
+    tab->provider_name =
+        saved != NULL ? g_strdup(saved)
+                      : runtime_config_get_string(win->config, "provider",
+                                                  PROVIDER_DEFAULT);
+  }
+
+  /* Create per-tab provider */
+  {
+    g_autofree char *err_msg = NULL;
+
+    if (win != NULL && win->config != NULL) {
+      tab->provider = provider_manager_create_or_fallback(
+          win->config, tab->provider_name, &err_msg);
+      if (err_msg != NULL) {
+        g_warning(
+            "Provider '%s' for restored tab failed, fell back to opencode: %s",
+            tab->provider_name, err_msg);
+        g_free(tab->provider_name);
+        tab->provider_name = g_strdup("opencode");
+      }
+    }
+
+    if (err_msg != NULL && win != NULL && win->window != NULL &&
+        !provider_error_shown) {
+      provider_error_shown = TRUE;
+      show_error_dialog(GTK_WINDOW(win->window), "Provider Not Available",
+                        err_msg);
+    }
+  }
+
   layout = g_key_file_get_integer(kf, "tab", "layout", NULL);
   tab->layout_mode = layout;
   tab->marked_lines_str = g_strdup(runtime_config_get_string(
@@ -285,34 +399,65 @@ Tab *tab_load(AppWindow *win, const char *uuid) {
     gtk_text_buffer_set_text(buf, text, -1);
   }
 
-  tab->follow_up_turn = g_key_file_get_integer(kf, "follow_up", "turn", NULL);
-  {
-    g_autofree char *lq = NULL;
-    g_autofree char *lo = NULL;
+  version = g_key_file_get_integer(kf, "tab", "version", NULL);
 
-    lq = g_key_file_get_string(kf, "follow_up", "last_query", NULL);
-    lo = g_key_file_get_string(kf, "follow_up", "last_output", NULL);
-    if (lq != NULL && lq[0] != '\0')
-      tab->last_query = g_strdup(lq);
-    if (lo != NULL && lo[0] != '\0')
-      tab->last_output = g_strdup(lo);
-  }
+  if (version >= 2) {
+    int count;
 
-  turn = tab->follow_up_turn;
-  for (i = 1; i <= turn; i++) {
-    g_autofree char *group = NULL;
-    g_autofree char *q = NULL;
-    g_autofree char *o = NULL;
-    int idx;
-    char *block;
+    count = g_key_file_get_integer(kf, "messages", "count", NULL);
+    for (int i = 0; i < count; i++) {
+      g_autofree char *group = g_strdup_printf("msg_%d", i);
+      g_autofree char *role_str =
+          g_key_file_get_string(kf, group, "role", NULL);
+      g_autofree char *content =
+          g_key_file_get_string(kf, group, "content", NULL);
 
-    idx = turn - i;
-    group = g_strdup_printf("history_%d", idx);
-    q = g_key_file_get_string(kf, group, "query", NULL);
-    o = g_key_file_get_string(kf, group, "output", NULL);
-    if (q != NULL && o != NULL) {
-      block = g_strdup_printf("Q.%d: %s\nA: %s", idx, q, o);
-      tab->qa_history = g_list_prepend(tab->qa_history, block);
+      if (content != NULL) {
+        ProviderRole role = PROVIDER_ROLE_USER;
+
+        if (g_strcmp0(role_str, "assistant") == 0)
+          role = PROVIDER_ROLE_ASSISTANT;
+        else if (g_strcmp0(role_str, "system") == 0)
+          role = PROVIDER_ROLE_SYSTEM;
+        tab_history_add(tab, role, content);
+      }
+    }
+  } else {
+    int turn;
+    int i;
+
+    /* Version 1 backward compat: read old [follow_up] + [history_N] */
+    turn = g_key_file_get_integer(kf, "follow_up", "turn", NULL);
+    {
+      g_autofree char *lq = NULL;
+      g_autofree char *lo = NULL;
+
+      lq = g_key_file_get_string(kf, "follow_up", "last_query", NULL);
+      lo = g_key_file_get_string(kf, "follow_up", "last_output", NULL);
+      if (lq != NULL && lq[0] != '\0')
+        tab->last_query = g_strdup(lq);
+      if (lo != NULL && lo[0] != '\0')
+        tab->last_output = g_strdup(lo);
+    }
+
+    for (i = 1; i <= turn; i++) {
+      g_autofree char *group = NULL;
+      g_autofree char *q = NULL;
+      g_autofree char *o = NULL;
+      int idx;
+      char *block;
+
+      idx = turn - i;
+      group = g_strdup_printf("history_%d", idx);
+      q = g_key_file_get_string(kf, group, "query", NULL);
+      o = g_key_file_get_string(kf, group, "output", NULL);
+      if (q != NULL && o != NULL) {
+        tab_history_add(tab, PROVIDER_ROLE_USER, q);
+        tab_history_add(tab, PROVIDER_ROLE_ASSISTANT, o);
+
+        block = g_strdup_printf("Q.%d: %s\nA: %s", idx, q, o);
+        tab->qa_history = g_list_prepend(tab->qa_history, block);
+      }
     }
   }
 

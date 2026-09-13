@@ -38,7 +38,7 @@ static const ConfigDefault CONFIG_DEFAULTS[] = {
     {"kb_shortcuts", KB_SHORTCUTS, NULL},
     {"kb_submit", KB_SUBMIT, NULL},
     {"kb_cancel", KB_CANCEL, NULL},
-    {"opencode_path", OPENCODE_PATH, "# Path to the opencode binary"},
+    {"provider", PROVIDER_DEFAULT, "# Backend provider (opencode, openrouter)"},
     {"agent_options", DEFAULT_AGENT_OPTIONS,
      "# Agent dropdown options (comma-separated, first=default)"},
     {"model_options", DEFAULT_MODEL_OPTIONS,
@@ -201,6 +201,10 @@ static void write_default_config(const char *path) {
   content = g_string_new("# promptr runtime configuration\n"
                          "# Each key falls back to the compile-time"
                          " default if missing.\n"
+                         "# WARNING: This file may contain API keys."
+                         " Do NOT blindly commit to version control.\n"
+                         "# Use a .env file or env vars for CI/CD"
+                         " deployments.\n"
                          "\n"
                          "[preferences]\n");
 

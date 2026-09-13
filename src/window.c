@@ -2,6 +2,7 @@
 #include "command.h"
 #include "config.h"
 #include "configfile.h"
+#include "provider-manager.h"
 
 #include <gtk4-layer-shell/gtk4-layer-shell.h>
 #include <gtksourceview/gtksource.h>
@@ -10,19 +11,20 @@
 #include <time.h>
 #include <unistd.h>
 
-typedef enum {
-  STATE_IDLE,
-  STATE_LOADING,
-  STATE_FINISHED,
-  STATE_CANCELED
-} AppState;
-
 static void on_submit(AppWindow *win);
 static void on_cancel(AppWindow *win);
 static void on_copy(AppWindow *win);
 static void on_close(AppWindow *win);
 static void on_quit(AppWindow *win);
 static void on_follow_up_toggled(Tab *tab);
+static void on_provider_event(gpointer source, const ProviderEvent *event,
+                              gpointer user_data);
+static void on_set_provider(GSimpleAction *action, GVariant *state,
+                            gpointer user_data);
+static void rebuild_provider_menu(GMenu *submenu, Tab *tab);
+static void rebuild_agent_menu(AppWindow *win, Tab *tab);
+static void rebuild_model_menu(AppWindow *win, Tab *tab);
+static void cancel_tab(Tab *tab);
 static void update_submit_sensitivity(Tab *tab);
 static char *get_trimmed_text(GtkWidget *text_view);
 static void set_prompt_focused(Tab *tab);
@@ -32,10 +34,6 @@ static void set_finished_state(Tab *tab, char *cmd, gint64 elapsed,
                                const char *output);
 static void set_canceled_state(Tab *tab, char *cmd);
 static void set_errored_state(Tab *tab, char *cmd, const char *stderr_output);
-
-static void command_finished_cb(Tab *tab, const char *output,
-                                const char *stderr_output, gint64 elapsed,
-                                int exit_code, gboolean exited_cleanly);
 
 static gboolean on_prompt_key_pressed(GtkEventControllerKey *controller,
                                       guint keyval, guint keycode,
@@ -212,7 +210,7 @@ static void esc_ctx_free(gpointer data, GClosure *closure) {
   g_free(data);
 }
 static void set_status_text(AppWindow *win, const char *text);
-static void log_append(AppWindow *win, const char *fmt, ...)
+void log_append(AppWindow *win, const char *fmt, ...)
     __attribute__((format(printf, 2, 3)));
 static gboolean hex_to_rgba(const char *hex, GdkRGBA *out);
 static void on_gutter_click(GtkGestureClick *gesture, int n_press, double x,
@@ -1072,6 +1070,17 @@ static void on_notebook_page_switched(GtkNotebook *notebook, GtkWidget *page,
       apply_layout(tab);
       set_prompt_focused(tab);
       update_window_title(win, tab->name);
+
+      /* Update provider action state + menu for the switched-to tab */
+      if (tab->provider_name != NULL) {
+        if (win->provider_action != NULL)
+          g_simple_action_set_state(win->provider_action,
+                                    g_variant_new_string(tab->provider_name));
+        if (win->provider_submenu != NULL)
+          rebuild_provider_menu(win->provider_submenu, tab);
+        rebuild_agent_menu(win, tab);
+        rebuild_model_menu(win, tab);
+      }
     }
   }
 }
@@ -1137,10 +1146,10 @@ static void close_tab(AppWindow *win, int idx) {
       tab_delete_saved(t->id);
     }
 
-    /* Cancel running subprocess before removing the page (prevents
+    /* Cancel running request before removing the page (prevents
        callback from accessing destroyed output_view / widgets). */
-    if (t != NULL && t->subprocess != NULL)
-      command_cancel(t);
+    if (t != NULL)
+      cancel_tab(t);
     /* Dock popped output before closing — the popout depends on
        the tab's widgets which are about to be destroyed. */
     if (t != NULL && t->output_popped)
@@ -1675,16 +1684,6 @@ AppWindow *app_window_new(GtkApplication *app) {
   win->config = runtime_config_load();
 
   {
-    g_autofree char *raw;
-
-    raw =
-        runtime_config_get_string(win->config, "opencode_path", OPENCODE_PATH);
-    if (g_str_has_prefix(raw, "~/"))
-      win->opencode_bin = g_build_filename(g_get_home_dir(), raw + 2, NULL);
-    else
-      win->opencode_bin = g_strdup(raw);
-  }
-  {
     const char *data_dir;
     g_autofree char *log_dir = NULL;
     g_autofree char *log_path = NULL;
@@ -1994,6 +1993,20 @@ AppWindow *app_window_new(GtkApplication *app) {
         g_action_map_lookup_action(G_ACTION_MAP(actions), "cycle_model_set"),
         "activate", G_CALLBACK(on_menu_cycle_model_set), win, NULL, 0);
 
+    /* Provider selection — stateful action, one radio item per known provider
+     */
+    {
+      Tab *active_tb = app_window_get_active_tab(win);
+      const char *init_p =
+          active_tb != NULL ? active_tb->provider_name : "opencode";
+      GSimpleAction *sact;
+
+      win->provider_action = sact = g_simple_action_new_stateful(
+          "set_provider", G_VARIANT_TYPE_STRING, g_variant_new_string(init_p));
+      g_signal_connect(sact, "change-state", G_CALLBACK(on_set_provider), win);
+      g_action_map_add_action(G_ACTION_MAP(actions), G_ACTION(sact));
+    }
+
     bar_visible = runtime_config_get_bool(win->config, "menu_bar_visible",
                                           MENU_BAR_VISIBLE_DEFAULT);
     sact = g_simple_action_new_stateful("menu_bar_visible", NULL,
@@ -2143,6 +2156,7 @@ AppWindow *app_window_new(GtkApplication *app) {
           GMenu *section_menu = g_menu_new();
           char **opts;
 
+          win->agent_section_menu = section_menu;
           opts = runtime_config_get_string_list(win->config, "agent_options");
           if (opts == NULL)
             opts = g_strsplit(DEFAULT_AGENT_OPTIONS, ",", -1);
@@ -2192,6 +2206,7 @@ AppWindow *app_window_new(GtkApplication *app) {
           GMenu *section_menu = g_menu_new();
           char **opts;
 
+          win->model_section_menu = section_menu;
           opts = runtime_config_get_string_list(win->config, "model_options");
           if (opts == NULL)
             opts = g_strsplit(DEFAULT_MODEL_OPTIONS, ",", -1);
@@ -2212,6 +2227,21 @@ AppWindow *app_window_new(GtkApplication *app) {
         }
 
         g_menu_append_submenu(section, "Model", G_MENU_MODEL(sub));
+      }
+
+      /* ── Provider submenu ──────────────────────────────────────── */
+      win->provider_submenu = g_menu_new();
+      rebuild_provider_menu(win->provider_submenu,
+                            app_window_get_active_tab(win));
+      g_menu_append_submenu(section, "Provider",
+                            G_MENU_MODEL(win->provider_submenu));
+
+      /* Initial checkmark sync for agent and model sections */
+      {
+        Tab *active_tab = app_window_get_active_tab(win);
+
+        rebuild_agent_menu(win, active_tab);
+        rebuild_model_menu(win, active_tab);
       }
 
       g_menu_append_submenu(menu, "Actions", G_MENU_MODEL(section));
@@ -2494,9 +2524,7 @@ void app_window_close_and_quit(AppWindow *win) {
   for (i = 0; i < win->tabs->len; i++) {
     Tab *tab = g_ptr_array_index(win->tabs, i);
 
-    if (tab->subprocess != NULL) {
-      command_cancel(tab);
-    }
+    cancel_tab(tab);
   }
 
   close_popups(win);
@@ -2520,7 +2548,6 @@ void app_window_free(gpointer data) {
 
   g_ptr_array_free(win->tabs, TRUE);
 
-  g_free(win->opencode_bin);
   runtime_config_free(win->config);
   if (win->log_file != NULL)
     fclose(win->log_file);
@@ -2594,15 +2621,9 @@ static void set_finished_state(Tab *tab, char *cmd, gint64 elapsed,
     GtkTextBuffer *buf;
     buf = gtk_text_view_get_buffer(GTK_TEXT_VIEW(tab->output_view));
     if (tab->follow_up_active) {
-      GString *display = g_string_new(output);
-      GList *l;
+      g_autofree char *combined = tab_history_render_display(tab, output);
 
-      for (l = tab->qa_history; l != NULL; l = l->next)
-        g_string_append_printf(display, "\n---\n%s", (char *)l->data);
-      {
-        g_autofree char *combined = g_string_free(display, FALSE);
-        gtk_text_buffer_set_text(buf, combined, -1);
-      }
+      gtk_text_buffer_set_text(buf, combined != NULL ? combined : output, -1);
       lines = gtk_text_buffer_get_line_count(buf);
     } else {
       gtk_text_buffer_set_text(buf, output, -1);
@@ -2612,8 +2633,6 @@ static void set_finished_state(Tab *tab, char *cmd, gint64 elapsed,
         tab->defaults_applied = TRUE;
       }
     }
-    g_free(tab->last_output);
-    tab->last_output = g_strdup(output);
     update_marked_label(tab);
     gtk_widget_set_sensitive(tab->copy_btn, TRUE);
   } else {
@@ -2635,16 +2654,58 @@ static void set_finished_state(Tab *tab, char *cmd, gint64 elapsed,
                                                  "returned no output — may "
                                                  "be an upstream issue");
     {
-      GtkAlertDialog *dlg;
-      const char *buttons[] = {"Dismiss", NULL};
+      /* Custom alert window: modal + transient + keep-above for prominence */
+      GtkWidget *alert_win, *alert_box, *alert_title, *alert_detail,
+          *alert_dismiss;
+      GtkEventController *k;
 
-      dlg = gtk_alert_dialog_new("Upstream Issue");
-      gtk_alert_dialog_set_detail(
-          dlg, "Command succeeded but returned no output.\n"
-               "This may be an upstream issue — try resubmitting your query.");
-      gtk_alert_dialog_set_buttons(dlg, buttons);
-      gtk_alert_dialog_show(dlg, GTK_WINDOW(win->window));
-      g_object_unref(dlg);
+      alert_win = gtk_window_new();
+      gtk_window_set_title(GTK_WINDOW(alert_win), "Upstream Issue");
+      gtk_window_set_transient_for(GTK_WINDOW(alert_win),
+                                   GTK_WINDOW(win->window));
+      gtk_window_set_modal(GTK_WINDOW(alert_win), TRUE);
+      gtk_window_set_destroy_with_parent(GTK_WINDOW(alert_win), TRUE);
+      gtk_window_set_resizable(GTK_WINDOW(alert_win), FALSE);
+      gtk_window_set_default_size(GTK_WINDOW(alert_win), 420, -1);
+      gtk_widget_add_css_class(alert_win, "alert-dialog");
+
+      alert_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12);
+      gtk_widget_set_margin_start(alert_box, 20);
+      gtk_widget_set_margin_end(alert_box, 20);
+      gtk_widget_set_margin_top(alert_box, 20);
+      gtk_widget_set_margin_bottom(alert_box, 20);
+      gtk_window_set_child(GTK_WINDOW(alert_win), alert_box);
+
+      alert_title = gtk_label_new(NULL);
+      gtk_label_set_markup(GTK_LABEL(alert_title),
+                           "<b>Command returned no output</b>");
+      gtk_widget_set_halign(alert_title, GTK_ALIGN_START);
+      gtk_box_append(GTK_BOX(alert_box), alert_title);
+
+      alert_detail = gtk_label_new(
+          "This may be an upstream issue — "
+          "the command succeeded but produced an empty response.\n"
+          "\n"
+          "Try resubmitting your query or check the session log "
+          "(Ctrl+Shift+D) for details.");
+      gtk_label_set_wrap(GTK_LABEL(alert_detail), TRUE);
+      gtk_widget_set_halign(alert_detail, GTK_ALIGN_START);
+      gtk_box_append(GTK_BOX(alert_box), alert_detail);
+
+      alert_dismiss = gtk_button_new_with_label("Dismiss");
+      gtk_widget_set_halign(alert_dismiss, GTK_ALIGN_END);
+      gtk_widget_set_margin_top(alert_dismiss, 8);
+      g_signal_connect_swapped(alert_dismiss, "clicked",
+                               G_CALLBACK(gtk_window_destroy), alert_win);
+      gtk_box_append(GTK_BOX(alert_box), alert_dismiss);
+
+      /* ESC dismisses */
+      k = gtk_event_controller_key_new();
+      g_signal_connect_swapped(k, "key-pressed", G_CALLBACK(gtk_window_destroy),
+                               alert_win);
+      gtk_widget_add_controller(alert_win, k);
+
+      gtk_window_present(GTK_WINDOW(alert_win));
     }
   }
 
@@ -2670,7 +2731,7 @@ static void set_canceled_state(Tab *tab, char *cmd) {
   tab_update_status_dot(tab);
   if (app_window_get_active_tab(win) == tab) {
     set_status_text(win, "Interrupted");
-    g_timeout_add(2000, (GSourceFunc)status_pop_cb, win->status_bar);
+    g_timeout_add(2000, (GSourceFunc)status_pop_cb, win);
   }
 
   log_append(win, "cancel → Cancelled.");
@@ -2730,16 +2791,15 @@ static void set_errored_state(Tab *tab, char *cmd, const char *stderr_output) {
 static void on_submit(AppWindow *win) {
   Tab *tab;
   char *query, *agent, *model;
-  GString *display;
-  char *cmd_display;
   GtkTextBuffer *outbuf;
-  g_autofree char *tmpdir = NULL;
   gboolean is_follow_up;
 
   tab = app_window_get_active_tab(win);
   if (tab == NULL)
     return;
-  if (tab->subprocess != NULL)
+  if (tab->state == STATE_LOADING)
+    return;
+  if (tab->provider == NULL)
     return;
 
   query = get_trimmed_text(tab->prompt_view);
@@ -2756,107 +2816,172 @@ static void on_submit(AppWindow *win) {
 
   tab->follow_up_active = tab->follow_up;
 
-  if (tab->follow_up_active && tab->tmpdir_path != NULL &&
-      g_file_test(tab->tmpdir_path, G_FILE_TEST_IS_DIR)) {
+  /* Determine follow-up: non-empty history means continuing a conversation */
+  if (tab->follow_up_active && tab->n_messages > 0) {
     is_follow_up = TRUE;
+    tab_history_add(tab, PROVIDER_ROLE_USER, query);
   } else {
     is_follow_up = FALSE;
     tab->follow_up_active = FALSE;
+    tab_history_clear(tab);
+    tab_history_add(tab, PROVIDER_ROLE_USER, query);
 
-    if (tab->tmpdir_path != NULL)
-      remove_dir(tab->tmpdir_path);
-    if (g_mkdir_with_parents(tab->tmpdir_path, 0700) == 0) {
-      tmpdir = g_strdup(tab->tmpdir_path);
-      gtk_widget_set_sensitive(tab->follow_up_check, TRUE);
-    }
+    gtk_widget_set_sensitive(tab->follow_up_check, TRUE);
   }
 
+  /* Build display string via provider */
+  {
+    char *display = tab->provider->vtable->get_display_string(
+        tab->provider->impl, query, model, agent, is_follow_up);
+
+    g_free(tab->cmd_string);
+    tab->cmd_string = display;
+  }
+
+  /* Prepare output area for new conversation turn */
+  outbuf = gtk_text_view_get_buffer(GTK_TEXT_VIEW(tab->output_view));
   if (is_follow_up) {
-    if (tab->last_output != NULL) {
-      tab->follow_up_turn++;
-      char *block = g_strdup_printf("Q.%d: %s\nA: %s", tab->follow_up_turn,
-                                    tab->last_query, tab->last_output);
-      tab->qa_history = g_list_prepend(tab->qa_history, block);
+    /* Pre-render completed history pairs, then place a LEFT_GRAVITY
+       mark at position 0 — each CHUNK insert pushes the mark forward,
+       so chunks accumulate in correct order above the history. */
+    {
+      int n_pairs = tab->n_messages / 2;
+      GString *pre = g_string_new(NULL);
+
+      for (int i = n_pairs - 1; i >= 0; i--) {
+        g_string_append_printf(pre, "\n---\nQ.%d: %s\nA: %s", i + 1,
+                               tab->messages[i * 2].content,
+                               tab->messages[i * 2 + 1].content);
+      }
+      gtk_text_buffer_set_text(outbuf, pre->str, -1);
+      g_string_free(pre, TRUE);
+    }
+
+    /* RIGHT_GRAVITY mark: sticks to the right of inserted text,
+       so each new chunk goes AFTER previous chunks but BEFORE history */
+    {
+      GtkTextIter start;
+
+      gtk_text_buffer_get_start_iter(outbuf, &start);
+      gtk_text_buffer_create_mark(outbuf, "stream-pos", &start, FALSE);
     }
   } else {
-    g_list_free_full(tab->qa_history, g_free);
-    tab->qa_history = NULL;
-    tab->follow_up_turn = 0;
-    g_free(tab->last_output);
-    tab->last_output = NULL;
-  }
-  g_free(tab->last_query);
-  tab->last_query = g_strdup(query);
-
-  if (is_follow_up)
-    tmpdir = g_strdup(tab->tmpdir_path);
-
-  display = g_string_new(win->opencode_bin);
-  g_string_append(display, " run");
-  if (is_follow_up)
-    g_string_append(display, " --continue");
-  if (tmpdir != NULL)
-    g_string_append_printf(display, " --dir %s", tmpdir);
-  if (model != NULL && g_strcmp0(model, "None") != 0 && model[0] != '\0')
-    g_string_append_printf(display, " --model %s", model);
-  if (agent != NULL && g_strcmp0(agent, "None") != 0 && agent[0] != '\0')
-    g_string_append_printf(display, " --agent %s", agent);
-  g_string_append_printf(display, " %s", query);
-  cmd_display = g_string_free(display, FALSE);
-
-  g_free(tab->cmd_string);
-  tab->cmd_string = cmd_display;
-
-  outbuf = gtk_text_view_get_buffer(GTK_TEXT_VIEW(tab->output_view));
-  if (!is_follow_up)
     gtk_text_buffer_set_text(outbuf, "", -1);
+  }
   gtk_widget_set_sensitive(tab->copy_btn, FALSE);
 
-  command_execute(tab, model, agent, query, tmpdir, win->opencode_bin,
-                  is_follow_up, command_finished_cb);
+  /* Submit through provider */
+  {
+    GError *error = NULL;
 
-  /* cmd_display may have been freed by command_finished_cb if
-     command_execute failed synchronously — re-read from tab. */
-  cmd_display = tab->cmd_string;
-  if (tab->subprocess != NULL)
-    set_loading_state(tab, cmd_display);
+    g_clear_object(&tab->cancellable);
+    tab->cancellable = g_cancellable_new();
+
+    if (tab->provider->vtable->submit(tab->provider->impl, tab, query,
+                                      tab->messages, tab->n_messages, model,
+                                      agent, is_follow_up, tab->cancellable,
+                                      on_provider_event, tab, &error)) {
+      if (tab->state == STATE_IDLE)
+        set_loading_state(tab, tab->cmd_string);
+    } else {
+      g_clear_object(&tab->cancellable);
+      if (error != NULL) {
+        g_warning("submit failed: %s", error->message);
+        g_error_free(error);
+      }
+    }
+  }
 
   g_free(query);
   g_free(agent);
   g_free(model);
 }
 
-static void command_finished_cb(Tab *tab, const char *output,
-                                const char *stderr_output, gint64 elapsed,
-                                int exit_code, gboolean exited_cleanly) {
-  AppWindow *win = tab->win;
+/* ── provider event handler ──────────────────────────────────── */
+
+static void on_provider_event(gpointer source, const ProviderEvent *event,
+                              gpointer user_data) {
+  Tab *tab = source;
+  AppWindow *win;
   char *cmd;
 
-  cmd = tab->cmd_string;
-  tab->cmd_string = NULL;
+  (void)user_data;
 
-  if (win->destroyed) {
-    g_free(cmd);
+  if (tab == NULL || tab->win == NULL)
     return;
+  win = tab->win;
+  if (win->destroyed)
+    return;
+
+  switch (event->type) {
+  case PROVIDER_EVENT_CHUNK:
+    if (event->output != NULL && event->output[0] != '\0') {
+      GtkTextBuffer *buf;
+
+      buf = gtk_text_view_get_buffer(GTK_TEXT_VIEW(tab->output_view));
+      if (buf != NULL) {
+        GtkTextIter pos;
+
+        /* For follow-ups: insert at the stream-pos mark. LEFT_GRAVITY
+           pushes the mark forward, so chunks accumulate in order. */
+        if (tab->follow_up_active) {
+          GtkTextMark *mark = gtk_text_buffer_get_mark(buf, "stream-pos");
+
+          if (mark != NULL)
+            gtk_text_buffer_get_iter_at_mark(buf, &pos, mark);
+          else
+            gtk_text_buffer_get_end_iter(buf, &pos);
+        } else {
+          gtk_text_buffer_get_end_iter(buf, &pos);
+        }
+
+        gtk_text_buffer_insert(buf, &pos, event->output, -1);
+
+        if (app_window_get_active_tab(win) == tab) {
+          /* Active tab: scroll to show new content */
+          gtk_text_view_scroll_to_iter(GTK_TEXT_VIEW(tab->output_view), &pos,
+                                       0.0, FALSE, 0.0, 0.0);
+        } else {
+          /* Background tab: mark unseen and update status dot */
+          tab->has_unseen_output = TRUE;
+          tab_update_status_dot(tab);
+        }
+      }
+    }
+    break;
+
+  case PROVIDER_EVENT_DONE: {
+    cmd = tab->cmd_string;
+    tab->cmd_string = NULL;
+
+    log_append(
+        win, "callback → done elapsed=%" G_GINT64_FORMAT " output_len=%zu",
+        event->elapsed_us, event->output != NULL ? strlen(event->output) : 0);
+
+    tab_history_add(tab, PROVIDER_ROLE_ASSISTANT, event->output);
+
+    /* event->output has the full response — for streaming (openrouter)
+       it's the accumulated content; for batch (opencode) it's the stdout.
+       Use it directly: the buffer for follow-ups contains old rendered
+       history + new streamed content, which would double the history. */
+    set_finished_state(tab, cmd, event->elapsed_us, event->output);
+    break;
   }
 
-  log_append(win,
-             "callback → exit_code=%d cleaned=%s stdout_len=%zu stderr_len=%zu",
-             exit_code, exited_cleanly ? "true" : "false",
-             output != NULL ? strlen(output) : 0,
-             stderr_output != NULL ? strlen(stderr_output) : 0);
+  case PROVIDER_EVENT_ERROR:
+    cmd = tab->cmd_string;
+    tab->cmd_string = NULL;
 
-  if (!exited_cleanly) {
-    set_canceled_state(tab, cmd);
-    return;
+    /* Empty error_msg signals cancellation (killed / interrupted) */
+    if (event->error_msg != NULL && event->error_msg[0] != '\0') {
+      log_append(win, "callback → error: %s", event->error_msg);
+      set_errored_state(tab, cmd, event->error_msg);
+    } else {
+      log_append(win, "callback → cancelled");
+      set_canceled_state(tab, cmd);
+    }
+    break;
   }
-
-  if (exit_code != 0) {
-    set_errored_state(tab, cmd, stderr_output);
-    return;
-  }
-
-  set_finished_state(tab, cmd, elapsed, output);
 }
 
 /* ── cancel ────────────────────────────────────────────────────── */
@@ -2864,10 +2989,22 @@ static void command_finished_cb(Tab *tab, const char *output,
 static void on_cancel(AppWindow *win) {
   Tab *tab = app_window_get_active_tab(win);
 
-  if (tab == NULL || tab->subprocess == NULL)
+  if (tab == NULL)
+    return;
+  if (tab->state != STATE_LOADING)
     return;
   log_append(win, "cancel → user requested");
-  command_cancel(tab);
+  if (tab->provider != NULL)
+    tab->provider->vtable->cancel(tab->provider->impl);
+}
+
+/* ── per-tab / all-tabs cancel helpers ─────────────────────────── */
+
+static void cancel_tab(Tab *tab) {
+  if (tab == NULL || tab->state != STATE_LOADING)
+    return;
+  if (tab->provider != NULL)
+    tab->provider->vtable->cancel_tab(tab->provider->impl, tab);
 }
 
 static void on_follow_up_toggled(Tab *tab) {
@@ -2904,13 +3041,24 @@ static void disarm_escape(AppWindow *win) {
 /* ── copy ──────────────────────────────────────────────────────── */
 
 static gboolean status_pop_cb(gpointer data) {
-  if (data != NULL && GTK_IS_LABEL(data))
-    gtk_label_set_text(GTK_LABEL(data), "Ready");
+  AppWindow *win = data;
+
+  set_status_text(win, "Ready");
   return G_SOURCE_REMOVE;
 }
 
 static void set_status_text(AppWindow *win, const char *text) {
-  gtk_label_set_text(GTK_LABEL(win->status_bar), text != NULL ? text : "");
+  Tab *tab;
+
+  tab = app_window_get_active_tab(win);
+  if (tab != NULL && tab->provider_name != NULL && text != NULL) {
+    g_autofree char *prefixed =
+        g_strdup_printf("[%s] %s", tab->provider_name, text);
+
+    gtk_label_set_text(GTK_LABEL(win->status_bar), prefixed);
+  } else {
+    gtk_label_set_text(GTK_LABEL(win->status_bar), text != NULL ? text : "");
+  }
 }
 
 static void on_copy(AppWindow *win) {
@@ -2957,7 +3105,7 @@ static void on_copy(AppWindow *win) {
   msg = g_strdup_printf("%zu %s copied to clipboard", nlines,
                         nlines == 1 ? "line" : "lines");
   set_status_text(win, msg);
-  g_timeout_add_seconds(2, status_pop_cb, win->status_bar);
+  g_timeout_add_seconds(2, status_pop_cb, win);
 
   log_append(win, "copy → %zu chars to clipboard", strlen(text));
   g_free(text);
@@ -2977,14 +3125,65 @@ static void on_close(AppWindow *win) {
   }
 
   tab = app_window_get_active_tab(win);
-  if (tab != NULL && tab->subprocess != NULL)
-    command_cancel(tab);
+  cancel_tab(tab);
   gtk_widget_set_visible(win->window, FALSE);
 }
 
 static void on_quit(AppWindow *win) {
   g_application_quit(G_APPLICATION(win->app));
 }
+
+/* ── reusable error dialog ────────────────────────────────────── */
+
+void show_error_dialog(GtkWindow *parent, const char *title,
+                       const char *detail) {
+  GtkWidget *alert_win, *alert_box, *alert_title, *alert_detail, *alert_dismiss;
+  GtkEventController *k;
+
+  alert_win = gtk_window_new();
+  gtk_window_set_title(GTK_WINDOW(alert_win), title);
+  gtk_window_set_transient_for(GTK_WINDOW(alert_win), parent);
+  gtk_window_set_modal(GTK_WINDOW(alert_win), TRUE);
+  gtk_window_set_destroy_with_parent(GTK_WINDOW(alert_win), TRUE);
+  gtk_window_set_resizable(GTK_WINDOW(alert_win), FALSE);
+  gtk_window_set_default_size(GTK_WINDOW(alert_win), 420, -1);
+  gtk_widget_add_css_class(alert_win, "alert-dialog");
+
+  alert_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12);
+  gtk_widget_set_margin_start(alert_box, 20);
+  gtk_widget_set_margin_end(alert_box, 20);
+  gtk_widget_set_margin_top(alert_box, 20);
+  gtk_widget_set_margin_bottom(alert_box, 20);
+  gtk_window_set_child(GTK_WINDOW(alert_win), alert_box);
+
+  alert_title = gtk_label_new(NULL);
+  g_autofree char *markup = g_strdup_printf("<b>%s</b>", title);
+  gtk_label_set_markup(GTK_LABEL(alert_title), markup);
+  gtk_widget_set_halign(alert_title, GTK_ALIGN_START);
+  gtk_box_append(GTK_BOX(alert_box), alert_title);
+
+  alert_detail = gtk_label_new(detail);
+  gtk_label_set_wrap(GTK_LABEL(alert_detail), TRUE);
+  gtk_widget_set_halign(alert_detail, GTK_ALIGN_START);
+  gtk_box_append(GTK_BOX(alert_box), alert_detail);
+
+  alert_dismiss = gtk_button_new_with_label("OK");
+  gtk_widget_set_halign(alert_dismiss, GTK_ALIGN_END);
+  gtk_widget_set_margin_top(alert_dismiss, 8);
+  g_signal_connect_swapped(alert_dismiss, "clicked",
+                           G_CALLBACK(gtk_window_destroy), alert_win);
+  gtk_box_append(GTK_BOX(alert_box), alert_dismiss);
+
+  /* ESC dismisses */
+  k = gtk_event_controller_key_new();
+  g_signal_connect_swapped(k, "key-pressed", G_CALLBACK(gtk_window_destroy),
+                           alert_win);
+  gtk_widget_add_controller(alert_win, k);
+
+  gtk_window_present(GTK_WINDOW(alert_win));
+}
+
+/* ── close / quit ─────────────────────────────────────────────── */
 
 static void close_popups(AppWindow *win) {
   guint i;
@@ -3022,16 +3221,14 @@ static gboolean on_close_request(GtkWindow *window, gpointer user_data) {
   }
 
   tab = app_window_get_active_tab(win);
-  if (tab != NULL && tab->subprocess != NULL)
-    command_cancel(tab);
-  /* Also cancel subprocesses on any background tab (finding 6.3) —
-     their callbacks would otherwise fire after close_popups destroys
-     win->cmd_label. */
+  cancel_tab(tab);
+  /* Also cancel requests on any background tab — their callbacks
+     would otherwise fire after close_popups destroys win->cmd_label. */
   for (i = 0; i < win->tabs->len; i++) {
     Tab *t = g_ptr_array_index(win->tabs, i);
 
-    if (t != NULL && t != tab && t->subprocess != NULL)
-      command_cancel(t);
+    if (t != NULL && t != tab)
+      cancel_tab(t);
   }
 
   close_popups(win);
@@ -3454,8 +3651,10 @@ static void on_menu_cycle_agent_set(GSimpleAction *action, GVariant *param,
 
   (void)action;
   tab = app_window_get_active_tab(win);
-  if (tab != NULL && tab->agent_dropdown != NULL)
+  if (tab != NULL && tab->agent_dropdown != NULL) {
     set_selected_text(tab->agent_dropdown, g_variant_get_string(param, NULL));
+    rebuild_agent_menu(win, tab);
+  }
 }
 
 static void on_menu_cycle_model_set(GSimpleAction *action, GVariant *param,
@@ -3465,8 +3664,173 @@ static void on_menu_cycle_model_set(GSimpleAction *action, GVariant *param,
 
   (void)action;
   tab = app_window_get_active_tab(win);
-  if (tab != NULL && tab->model_dropdown != NULL)
+  if (tab != NULL && tab->model_dropdown != NULL) {
     set_selected_text(tab->model_dropdown, g_variant_get_string(param, NULL));
+    rebuild_model_menu(win, tab);
+  }
+}
+
+static void rebuild_provider_menu(GMenu *submenu, Tab *tab) {
+  const char *const *names;
+  int n;
+
+  (void)tab;
+
+  /* Remove existing items */
+  n = g_menu_model_get_n_items(G_MENU_MODEL(submenu));
+  for (int i = n - 1; i >= 0; i--)
+    g_menu_remove(submenu, i);
+
+  names = provider_manager_get_names();
+  for (int i = 0; names[i] != NULL; i++) {
+    GMenuItem *item;
+
+    item = g_menu_item_new(names[i], NULL);
+    g_menu_item_set_action_and_target_value(item, "win.set_provider",
+                                            g_variant_new_string(names[i]));
+    g_menu_append_item(submenu, item);
+  }
+}
+
+/* ── rebuild agent / model submenu sections with checkmarks ────── */
+
+static void rebuild_agent_menu(AppWindow *win, Tab *tab) {
+  char **opts;
+  int n;
+
+  if (win->agent_section_menu == NULL)
+    return;
+
+  n = g_menu_model_get_n_items(G_MENU_MODEL(win->agent_section_menu));
+  for (int i = n - 1; i >= 0; i--)
+    g_menu_remove(win->agent_section_menu, i);
+
+  opts = runtime_config_get_string_list(win->config, "agent_options");
+  if (opts == NULL)
+    opts = g_strsplit(DEFAULT_AGENT_OPTIONS, ",", -1);
+
+  for (int i = 0; opts[i] != NULL && opts[i][0] != '\0'; i++) {
+    GString *label;
+    GMenuItem *item;
+    GVariant *target;
+
+    label = g_string_new(opts[i]);
+    target = g_variant_new_string(opts[i]);
+
+    /* Checkmark prefix for selected agent */
+    if (tab != NULL && tab->agent_dropdown != NULL) {
+      g_autofree char *selected = get_selected_text(tab->agent_dropdown);
+
+      if (g_strcmp0(selected, opts[i]) == 0)
+        g_string_prepend(label, "\xe2\x9c\x93 ");
+      else
+        g_string_prepend(label, "  ");
+    } else {
+      g_string_prepend(label, "  ");
+    }
+
+    item = g_menu_item_new(label->str, NULL);
+    g_menu_item_set_action_and_target_value(item, "win.cycle_agent_set",
+                                            target);
+    g_menu_append_item(win->agent_section_menu, item);
+    g_string_free(label, TRUE);
+  }
+  g_strfreev(opts);
+}
+
+static void rebuild_model_menu(AppWindow *win, Tab *tab) {
+  char **opts;
+  int n;
+
+  if (win->model_section_menu == NULL)
+    return;
+
+  n = g_menu_model_get_n_items(G_MENU_MODEL(win->model_section_menu));
+  for (int i = n - 1; i >= 0; i--)
+    g_menu_remove(win->model_section_menu, i);
+
+  opts = runtime_config_get_string_list(win->config, "model_options");
+  if (opts == NULL)
+    opts = g_strsplit(DEFAULT_MODEL_OPTIONS, ",", -1);
+
+  for (int i = 0; opts[i] != NULL && opts[i][0] != '\0'; i++) {
+    GString *label;
+    GMenuItem *item;
+    GVariant *target;
+
+    label = g_string_new(opts[i]);
+    target = g_variant_new_string(opts[i]);
+
+    /* Checkmark prefix for selected model */
+    if (tab != NULL && tab->model_dropdown != NULL) {
+      g_autofree char *selected = get_selected_text(tab->model_dropdown);
+
+      if (g_strcmp0(selected, opts[i]) == 0)
+        g_string_prepend(label, "\xe2\x9c\x93 ");
+      else
+        g_string_prepend(label, "  ");
+    } else {
+      g_string_prepend(label, "  ");
+    }
+
+    item = g_menu_item_new(label->str, NULL);
+    g_menu_item_set_action_and_target_value(item, "win.cycle_model_set",
+                                            target);
+    g_menu_append_item(win->model_section_menu, item);
+    g_string_free(label, TRUE);
+  }
+  g_strfreev(opts);
+}
+
+static void on_set_provider(GSimpleAction *action, GVariant *state,
+                            gpointer user_data) {
+  AppWindow *win = user_data;
+  Tab *tab;
+  const char *new_name;
+
+  tab = app_window_get_active_tab(win);
+  if (tab == NULL || tab->provider == NULL) {
+    g_simple_action_set_state(action, state);
+    return;
+  }
+
+  new_name = g_variant_get_string(state, NULL);
+
+  /* Confirm the state — must always call this for change-state */
+  g_simple_action_set_state(action, state);
+
+  if (g_strcmp0(new_name, tab->provider_name) == 0)
+    return;
+
+  /* Destroy old provider */
+  if (tab->provider != NULL) {
+    if (tab->provider->vtable->cleanup_session != NULL)
+      tab->provider->vtable->cleanup_session(tab->provider->impl, tab);
+    provider_manager_destroy(tab->provider);
+  }
+
+  /* Create new provider (falls back to opencode on failure) */
+  {
+    g_autofree char *err_msg = NULL;
+
+    tab->provider_name = g_strdup(new_name);
+    tab->provider =
+        provider_manager_create_or_fallback(win->config, new_name, &err_msg);
+    if (err_msg != NULL) {
+      g_warning("Failed to switch to %s, fell back to opencode: %s", new_name,
+                err_msg);
+      g_free(tab->provider_name);
+      tab->provider_name = g_strdup("opencode");
+
+      /* Show error dialog */
+      show_error_dialog(GTK_WINDOW(win->window), "Provider Not Available",
+                        err_msg);
+    }
+  }
+
+  rebuild_provider_menu(win->provider_submenu, tab);
+
+  log_append(win, "provider → switched to %s", tab->provider_name);
 }
 
 static void on_about(AppWindow *win) {
@@ -3844,13 +4208,13 @@ static void hover_enter_cb(GtkEventControllerMotion *ctrl, double x, double y,
   (void)ctrl;
   (void)x;
   (void)y;
-  gtk_label_set_text(GTK_LABEL(ctx->win->status_bar), ctx->text);
+  set_status_text(ctx->win, ctx->text);
 }
 
 static void hover_leave_cb(GtkEventControllerMotion *ctrl, gpointer data) {
   AppWindow *win = data;
   (void)ctrl;
-  gtk_label_set_text(GTK_LABEL(win->status_bar), "Ready");
+  set_status_text(win, "Ready");
 }
 
 static void hover_ctx_free(gpointer data, GClosure *closure) {
@@ -3869,7 +4233,7 @@ static void dropdown_hover_enter(GtkEventControllerMotion *ctrl, double x,
   (void)x;
   (void)y;
   if (text != NULL)
-    gtk_label_set_text(GTK_LABEL(ctx->win->status_bar), text);
+    set_status_text(ctx->win, text);
 }
 
 static void dropdown_hover_ctx_free(gpointer data, GClosure *closure) {
@@ -4026,7 +4390,7 @@ static GtkWidget *cell_box(GtkWidget *child, const char *row_class,
   return box;
 }
 
-static void log_append(AppWindow *win, const char *fmt, ...) {
+void log_append(AppWindow *win, const char *fmt, ...) {
   GString *line;
   char timestr[64];
   time_t now;
@@ -4103,9 +4467,7 @@ static void on_dropdown_changed(GObject *self, GParamSpec *pspec, Tab *tab) {
 /* ── cmd preview ──────────────────────────────────────────────── */
 
 static void update_cmd_preview(Tab *tab) {
-  AppWindow *win = tab->win;
   char *query, *agent, *model;
-  GString *display;
 
   if (tab->state == STATE_LOADING)
     return;
@@ -4117,22 +4479,14 @@ static void update_cmd_preview(Tab *tab) {
   agent = get_selected_text(tab->agent_dropdown);
   model = get_selected_text(tab->model_dropdown);
 
-  display = g_string_new(win->opencode_bin);
-  g_string_append(display, " run");
-  if (tab->follow_up)
-    g_string_append(display, " --continue --dir <tmp>");
-  else
-    g_string_append(display, " --dir <tmp>");
-  if (model != NULL && g_strcmp0(model, "None") != 0 && model[0] != '\0')
-    g_string_append_printf(display, " --model %s", model);
-  if (agent != NULL && g_strcmp0(agent, "None") != 0 && agent[0] != '\0')
-    g_string_append_printf(display, " --agent %s", agent);
-  if (query != NULL && query[0] != '\0')
-    g_string_append_printf(display, " %s", query);
-  else
-    g_string_append(display, " <query>");
+  if (tab->provider != NULL) {
+    g_autofree char *display = tab->provider->vtable->get_display_string(
+        tab->provider->impl, query != NULL ? query : "", model, agent,
+        tab->follow_up);
 
-  g_string_free(display, TRUE);
+    (void)display;
+  }
+
   g_free(query);
   g_free(agent);
   g_free(model);
