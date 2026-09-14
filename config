@@ -1,5 +1,7 @@
 # promptr runtime configuration
 # Each key falls back to the compile-time default if missing.
+# WARNING: This file may contain API keys. Do NOT blindly commit to version control.
+# Use a .env file or env vars for CI/CD deployments.
 
 [preferences]
 # Window size in pixels
@@ -25,8 +27,8 @@ kb_shortcuts=<Control>F1
 kb_submit=<Control>Return
 kb_cancel=
 
-# Path to the opencode binary
-opencode_path=opencode
+# Backend provider (opencode, openrouter)
+provider=opencode
 
 # Agent dropdown options (comma-separated, first=default)
 agent_options=linux_cmd,None

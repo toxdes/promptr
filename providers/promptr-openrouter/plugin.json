@@ -1,0 +1,27 @@
+{
+  "name": "openrouter",
+  "version": "1.0.0",
+  "command": "promptr-openrouter",
+  "description": "OpenRouter API provider",
+  "homepage": "https://openrouter.ai",
+  "type": "provider",
+  "methods": [
+    "provider/initialize",
+    "provider/submit",
+    "provider/cancel",
+    "provider/shutdown"
+  ],
+  "config_schema": {
+    "api_key": {
+      "type": "string",
+      "required": true,
+      "secret": true,
+      "comment": "OpenRouter API key (or set OPENROUTER_API_KEY env var)"
+    },
+    "base_url": {
+      "type": "string",
+      "default": "https://openrouter.ai/api/v1",
+      "comment": "Custom base URL"
+    }
+  }
+}

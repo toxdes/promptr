@@ -6,13 +6,13 @@ Build `.deb`, `.rpm`, `.AppImage`, and a PKGBUILD for all platforms
 with Docker:
 
 ```sh
-./build-all.py
+./yesb/build_all.py
 ```
 
 For AppImages:
 
 ```sh
-./build-all.py --include-appimage
+./yesb/build_all.py --include-appimage
 ```
 
 Requires Docker with `buildx`. Output in `dist/`:
@@ -32,12 +32,12 @@ dist/
 
 1. Bump the version in `VERSION`, commit
 2. Tag: `git tag v0.1.7 && git push origin v0.1.7`
-3. Build: `./build-all.py [--include-appimage]`. Skip AppImage for
+3. Build: `./yesb/build_all.py [--include-appimage]`. Skip AppImage for
    smaller releases.
 4. Create a GitHub release and upload artifacts from `dist/`
-5. Push to AUR: `./release-aur.py`
-6. Push to apt repository: `./release-apt.py`
-7. Push to RPM repository: `./release-rpm.py`
+5. Push to AUR: `./yesb/release_aur.py`
+6. Push to apt repository: `./yesb/release_apt.py`
+7. Push to RPM repository: `./yesb/release_rpm.py`
 
 ## Publishing to the apt repository
 
@@ -74,14 +74,14 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 Build the apt repository, sign the metadata, and upload to R2:
 
 ```sh
-./release-apt.py
+./yesb/release_apt.py
 ```
 
 Test locally first:
 
 ```sh
-./release-apt.py --dry-run    # build repo, skip upload
-./release-apt.py --serve      # build and serve via HTTP (port 8080)
+./yesb/release_apt.py --dry-run    # build repo, skip upload
+./yesb/release_apt.py --serve      # build and serve via HTTP (port 8080)
 ```
 
 With `--serve`, test the repo in a container:
@@ -134,14 +134,14 @@ promptr is distributed via a self-hosted repository at
 Build the RPM repository, sign the metadata, and upload to R2:
 
 ```sh
-./release-rpm.py
+./yesb/release_rpm.py
 ```
 
 Test locally first:
 
 ```sh
-./release-rpm.py --dry-run    # build repo, skip upload
-./release-rpm.py --serve      # build and serve via HTTP (port 8080)
+./yesb/release_rpm.py --dry-run    # build repo, skip upload
+./yesb/release_rpm.py --serve      # build and serve via HTTP (port 8080)
 ```
 
 With `--serve`, test the repo in a container:
@@ -182,9 +182,9 @@ sudo dnf install promptr
 Pushes PKGBUILD and `.SRCINFO` to `promptr-git` and `promptr-bin` on the AUR.
 
 ```sh
-./release-aur.py --type git     # for source package
-./release-aur.py --type bin     # for binary package
-./release-aur.py --type both    # both (default)
+./yesb/release_aur.py --type git     # for source package
+./yesb/release_aur.py --type bin     # for binary package
+./yesb/release_aur.py --type both    # both (default)
 ```
 
 Requires an SSH key registered with your AUR account.
@@ -196,22 +196,22 @@ After publishing, purge the cache so users get the latest packages:
 
 ```sh
 # Check current TTL settings
-./cf-purge-cache.py --check-ttl
+./yesb/cf_purge_cache.py --check-ttl
 
 # Set TTLs to 1 year (run once)
-./cf-purge-cache.py --set-ttl
+./yesb/cf_purge_cache.py --set-ttl
 
 # Purge cache after publishing
-./cf-purge-cache.py
+./yesb/cf_purge_cache.py
 
 # Dry-run (show what would happen)
-./cf-purge-cache.py --dry-run
+./yesb/cf_purge_cache.py --dry-run
 ```
 
 All commands load credentials from an env file:
 
 ```sh
-./cf-purge-cache.py --env <path-to-env-file>
+./yesb/cf_purge_cache.py --env <path-to-env-file>
 ```
 
 ### Environment

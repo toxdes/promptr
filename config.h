@@ -68,6 +68,9 @@
 /* Path to the opencode binary */
 #define OPENCODE_PATH            "opencode"
 
+/* Backend provider ("opencode" or "openrouter") */
+#define PROVIDER_DEFAULT         "opencode"
+
 /* Default marked lines (0=all, -1=none, or comma-separated 1-based) */
 #define DEFAULT_MARKED_LINES_STR "1"
 
