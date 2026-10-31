@@ -6,7 +6,9 @@ pkgdesc="GTK4 overlay prompt for opencode"
 arch=('x86_64' 'aarch64')
 url="https://github.com/toxdes/promptr"
 license=('MIT')
-depends=('gtk4' 'gtksourceview5' 'gtk4-layer-shell')
+provides=("promptr=${pkgver}")
+conflicts=('promptr')
+depends=('gtk4' 'gtksourceview5' 'gtk4-layer-shell' 'curl' 'json-glib')
 makedepends=('git' 'gcc' 'make' 'pkg-config')
 source=("git+https://github.com/toxdes/promptr.git")
 sha256sums=('SKIP')
