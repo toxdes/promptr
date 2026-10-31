@@ -50,6 +50,7 @@ icon = "data/promptr.svg"
 desktop = "com.toxdes.promptr.desktop"
 
 [deb]
+helper_image = "docker.io/toxdes/yesb-apt-helper@sha256:ec2452ba31dcec97924f061352ed84626ee890d3b88f33bddf6eb22fe8eb635f"
 package_name = "promptr"
 section = "utils"
 priority = "optional"
@@ -63,6 +64,7 @@ depends = [
 ]
 
 [rpm]
+helper_image = "docker.io/toxdes/yesb-rpm-helper@sha256:ee8caaff1fd1434b1414e09b5fce00572d3199b622f6ba39f73a3934117e221c"
 package_name = "promptr"
 release = "1"
 architectures = ["x86_64", "aarch64"]
