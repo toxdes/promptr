@@ -63,11 +63,19 @@ sudo dnf install promptr
 
 promptr is available in the AUR. Install with an AUR helper:
 
+Build the latest tagged release from source:
+
+```sh
+yay -S promptr
+```
+
+Or install the prebuilt release:
+
 ```sh
 yay -S promptr-bin
 ```
 
-Or build from latest source:
+Or build the latest development source:
 
 ```sh
 yay -S promptr-git

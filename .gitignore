@@ -21,3 +21,4 @@ __pycache__/
 .apt-env
 openrouter-api-ref.md
 providers/*/promptr-*
+.worktrees/

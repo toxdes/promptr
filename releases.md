@@ -49,8 +49,10 @@ promptr is distributed via a self-hosted repository at
 - [uv](https://docs.astral.sh/uv/) (dependencies are declared inline in the
   script)
 - `gpg` for repository signing
-- `dpkg-deb` for package inspection (usually already installed on
-  Debian/Ubuntu)
+- Docker; `[deb].helper_image` pins the Debian repository helper in `release.toml`
+
+Package inspection and index generation run in the helper. Signing keys, GPG
+prompts and uploads stay on the host; no host Debian tools are required.
 
 Install uv:
 
@@ -126,8 +128,10 @@ promptr is distributed via a self-hosted repository at
 
 - [uv](https://docs.astral.sh/uv/)
 - `gpg` for repository signing
-- `createrepo_c` for generating RPM metadata (`apt install createrepo-c` on
-  Debian/Ubuntu)
+- Docker; `[rpm].helper_image` pins the Fedora repository helper in `release.toml`
+
+RPM signing and index tools run in the helper. Its signing adapter uses host GPG
+without exporting private keys or mounting agents. No host RPM tools are required.
 
 ### Publishing
 
@@ -179,12 +183,15 @@ sudo dnf install promptr
 
 ## Publishing to Arch Linux (AUR)
 
-Pushes PKGBUILD and `.SRCINFO` to `promptr-git` and `promptr-bin` on the AUR.
+Pushes PKGBUILD and `.SRCINFO` to the configured stable, development and binary
+AUR packages. Docker generates metadata using `[aur].srcinfo_helper_image`;
+Git/SSH and any Git commit signing remain on the host.
 
 ```sh
-./yesb/release_aur.py --type git     # for source package
-./yesb/release_aur.py --type bin     # for binary package
-./yesb/release_aur.py --type both    # both (default)
+./yesb/release_aur.py --type source  # tagged stable source
+./yesb/release_aur.py --type git     # development source
+./yesb/release_aur.py --type bin     # binary package
+./yesb/release_aur.py --type all     # all three (default)
 ```
 
 Requires an SSH key registered with your AUR account.
