@@ -2,17 +2,11 @@
 
 ## Building packages
 
-Build `.deb`, `.rpm`, `.AppImage`, and a PKGBUILD for all platforms
+Build `.deb`, `.rpm`, `.tar.gz`, `.AppImage`, and a PKGBUILD for both Linux architectures
 with Docker:
 
 ```sh
 ./yesb/build_all.py
-```
-
-For AppImages:
-
-```sh
-./yesb/build_all.py --include-appimage
 ```
 
 Requires Docker with `buildx`. Output in `dist/`:
@@ -25,19 +19,21 @@ dist/
   promptr-x.y.z-1.aarch64.rpm
   promptr-x.y.z-amd64.AppImage
   promptr-x.y.z-arm64.AppImage
+  promptr_x.y.z_amd64.tar.gz
+  promptr_x.y.z_arm64.tar.gz
+  SHA256SUMS
   PKGBUILD
 ```
 
 ## Release workflow
 
-1. Bump the version in `VERSION`, commit
-2. Tag: `git tag v0.1.7 && git push origin v0.1.7`
-3. Build: `./yesb/build_all.py [--include-appimage]`. Skip AppImage for
-   smaller releases.
-4. Create a GitHub release and upload artifacts from `dist/`
-5. Push to AUR: `./yesb/release_aur.py`
-6. Push to apt repository: `./yesb/release_apt.py`
-7. Push to RPM repository: `./yesb/release_rpm.py`
+1. On `release/vX.Y.Z`, update `VERSION`, the AUR recipes, and `CHANGELOG.md`.
+2. Build with `./yesb/build_all.py` and verify the packages and checksums.
+3. Merge the release PR and push a signed `vX.Y.Z` tag on the merged commit.
+4. Publish the APT, RPM, and AUR packages with their respective Yesb publishers.
+5. Run `./yesb/release_direct.py --env <path-to-env-file>` to publish the packages
+   and per-file checksums to the R2 `releases/` prefix. Update the download links
+   in the release PR when bumping the version.
 
 ## Publishing to the apt repository
 

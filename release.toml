@@ -16,13 +16,53 @@ platforms = ["linux/amd64", "linux/arm64"]
 
 [build.args]
 BUILD = "release"
-INCLUDE_APPIMAGE = "0"
+INCLUDE_APPIMAGE = "1"
 
 [artifacts]
 deb = ["*.deb"]
 rpm = ["*.rpm"]
 archive = ["*.tar.gz"]
 appimage = ["*.AppImage"]
+
+[[release.artifacts]]
+name = "promptr_{version}_amd64.deb"
+platform = "linux"
+architecture = "amd64"
+
+[[release.artifacts]]
+name = "promptr_{version}_arm64.deb"
+platform = "linux"
+architecture = "arm64"
+
+[[release.artifacts]]
+name = "promptr-{version}-1.x86_64.rpm"
+platform = "linux"
+architecture = "amd64"
+
+[[release.artifacts]]
+name = "promptr-{version}-1.aarch64.rpm"
+platform = "linux"
+architecture = "arm64"
+
+[[release.artifacts]]
+name = "promptr_{version}_amd64.tar.gz"
+platform = "linux"
+architecture = "amd64"
+
+[[release.artifacts]]
+name = "promptr_{version}_arm64.tar.gz"
+platform = "linux"
+architecture = "arm64"
+
+[[release.artifacts]]
+name = "promptr-{version}-amd64.AppImage"
+platform = "linux"
+architecture = "amd64"
+
+[[release.artifacts]]
+name = "promptr-{version}-arm64.AppImage"
+platform = "linux"
+architecture = "arm64"
 
 [package]
 binary = "promptr"

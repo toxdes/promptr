@@ -86,7 +86,8 @@ yay -S promptr-git
 
 ### AppImage
 
-For now, `.AppImage` packages are available in select releases. Check the [releases page](https://github.com/toxdes/promptr/releases).
+Download the [x86-64 AppImage](https://packages.toxdes.com/releases/promptr-0.3.0-amd64.AppImage)
+or the [ARM64 AppImage](https://packages.toxdes.com/releases/promptr-0.3.0-arm64.AppImage).
 
 Once you have the `promptr-*.AppImage`, run:
 ```sh
@@ -324,8 +325,16 @@ G_MESSAGES_DEBUG=Gdk ./promptr-debug
 
 ## Releases
 
-Pre-built `.deb` and `.rpm` packages are available on the
-[GitHub releases page](https://github.com/toxdes/promptr/releases/latest).
+Download v0.3.0 packages from `packages.toxdes.com`. Append `.sha256` to a
+download URL to get its checksum.
+
+| Format | x86-64 | ARM64 |
+| --- | --- | --- |
+| Debian | [Download](https://packages.toxdes.com/releases/promptr_0.3.0_amd64.deb) | [Download](https://packages.toxdes.com/releases/promptr_0.3.0_arm64.deb) |
+| RPM | [Download](https://packages.toxdes.com/releases/promptr-0.3.0-1.x86_64.rpm) | [Download](https://packages.toxdes.com/releases/promptr-0.3.0-1.aarch64.rpm) |
+| Tarball | [Download](https://packages.toxdes.com/releases/promptr_0.3.0_amd64.tar.gz) | [Download](https://packages.toxdes.com/releases/promptr_0.3.0_arm64.tar.gz) |
+
+See [CHANGELOG.md](CHANGELOG.md) for release notes.
 
 For building packages and the full release workflow, see [releases.md](releases.md).
 
