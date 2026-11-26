@@ -1,6 +1,6 @@
 # Maintainer: toxdes <hi@toxdes.com>
 pkgname=promptr-git
-pkgver=0.1.4
+pkgver=0.3.0
 pkgrel=1
 pkgdesc="Native GTK4 chat frontend with independent provider plugins"
 arch=('x86_64' 'aarch64')
