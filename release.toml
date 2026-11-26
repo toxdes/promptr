@@ -149,7 +149,7 @@ release_prefix = "releases"
 suite = "stable"
 component = "main"
 origin = "toxdes"
-label = "promptr"
+label = "Toxdes"
 
 [hosting.signing]
 gpg_key_env = "GPG_KEY_ID"
