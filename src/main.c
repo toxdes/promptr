@@ -1,7 +1,9 @@
+#include "app-diagnostics.h"
 #include "config.h"
 #include "window.h"
 #include <gtk/gtk.h>
 #include <gtksourceview/gtksource.h>
+#include <signal.h>
 
 static void on_activate(GApplication *app, gpointer user_data) {
   AppWindow *win;
@@ -32,6 +34,10 @@ static void on_shutdown(GApplication *app, gpointer user_data) {
 int main(int argc, char *argv[]) {
   GtkApplication *app;
   int status;
+
+  signal(SIGPIPE, SIG_IGN);
+  app_diagnostics_install(gtk_get_major_version(), gtk_get_minor_version(),
+                          gtk_get_micro_version());
 
   {
     const char *cfg_dir;

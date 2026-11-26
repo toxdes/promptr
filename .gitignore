@@ -19,3 +19,6 @@ prompt.md
 promptr2
 __pycache__/
 .apt-env
+openrouter-api-ref.md
+providers/*/promptr-*
+.worktrees/

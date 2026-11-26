@@ -1,0 +1,22 @@
+# Maintainer: toxdes <hi@toxdes.com>
+pkgname=promptr
+pkgver=0.2.3
+pkgrel=1
+pkgdesc="GTK4 overlay prompt for opencode"
+arch=('x86_64' 'aarch64')
+url="https://github.com/toxdes/promptr"
+license=('MIT')
+depends=('gtk4' 'gtksourceview5' 'gtk4-layer-shell' 'curl' 'json-glib')
+makedepends=('git' 'gcc' 'make' 'pkg-config')
+source=("git+https://github.com/toxdes/promptr.git#tag=v${pkgver}")
+sha256sums=('SKIP')
+
+build() {
+  cd "$srcdir/promptr"
+  make BUILD=release
+}
+
+package() {
+  cd "$srcdir/promptr"
+  make install PREFIX=/usr DESTDIR="$pkgdir"
+}

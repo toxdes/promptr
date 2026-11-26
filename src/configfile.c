@@ -1,6 +1,5 @@
 #include "configfile.h"
 #include "config.h"
-#include <gtk/gtk.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -38,11 +37,12 @@ static const ConfigDefault CONFIG_DEFAULTS[] = {
     {"kb_shortcuts", KB_SHORTCUTS, NULL},
     {"kb_submit", KB_SUBMIT, NULL},
     {"kb_cancel", KB_CANCEL, NULL},
-    {"opencode_path", OPENCODE_PATH, "# Path to the opencode binary"},
+    {"provider", PROVIDER_DEFAULT,
+     "# Default provider profile UUID or plugin name"},
     {"agent_options", DEFAULT_AGENT_OPTIONS,
-     "# Agent dropdown options (comma-separated, first=default)"},
+     "# Legacy agent options (selection now uses Markdown files)"},
     {"model_options", DEFAULT_MODEL_OPTIONS,
-     "# Model dropdown options (comma-separated, first=default)"},
+     "# Legacy model options (selection now uses provider profiles)"},
     {"marked_lines", DEFAULT_MARKED_LINES_STR,
      "# Default marked lines on output"
      " (0=all, -1=none, or comma-separated 1-based)"},
@@ -50,10 +50,14 @@ static const ConfigDefault CONFIG_DEFAULTS[] = {
      "# Window decorations when layer-shell is disabled (0 or 1)"},
     {"command_expanded", G_STRINGIFY(COMMAND_EXPANDED_DEFAULT),
      "# Command section expanded by default (0 or 1)"},
-    {"prompt_font_size", G_STRINGIFY(PROMPT_FONT_SIZE_DEFAULT),
-     "# Font size in pt for prompt text (0 = system default)"},
-    {"output_font_size", G_STRINGIFY(OUTPUT_FONT_SIZE_DEFAULT),
-     "# Font size in pt for output text (0 = system default)"},
+    {"query_font", QUERY_FONT_DEFAULT,
+     "# Font for query editor (Pango description; omit size for system "
+     "default)"},
+    {"answer_font", ANSWER_FONT_DEFAULT,
+     "# Font for answer editor (Pango description; omit size for system "
+     "default)"},
+    {"editor_line_numbers", G_STRINGIFY(EDITOR_LINE_NUMBERS_DEFAULT),
+     "# Show line numbers in prompt and output editors (0 or 1)"},
     {"gsk_renderer", GSK_RENDERER_DEFAULT,
      "# GSK renderer backend (set before gtk_init,"
      " not switchable at runtime):\n"
@@ -98,9 +102,30 @@ static void migrate_config(const char *path, GKeyFile *kf) {
   gboolean changed = FALSE;
   gboolean cleaned = FALSE;
   g_autoptr(GError) error = NULL;
-  g_autofree gchar **keys = NULL;
+  g_auto(GStrv) keys = NULL;
   gsize n_keys;
 
+  g_autoptr(GString) migrated_fonts = g_string_new(NULL);
+  const char *font_keys[] = {"query_font", "answer_font"};
+  const char *size_keys[] = {"prompt_font_size", "output_font_size"};
+  for (guint i = 0; i < G_N_ELEMENTS(font_keys); i++) {
+    if (!g_key_file_has_key(kf, GROUP, font_keys[i], NULL) &&
+        (g_key_file_has_key(kf, GROUP, "editor_font_family", NULL) ||
+         g_key_file_has_key(kf, GROUP, size_keys[i], NULL))) {
+      g_autofree char *family =
+          g_key_file_get_string(kf, GROUP, "editor_font_family", NULL);
+      int size = g_key_file_get_integer(kf, GROUP, size_keys[i], NULL);
+      const char *name = family != NULL && *family ? family : "Monospace";
+      g_autofree char *font =
+          size > 0 ? g_strdup_printf("%s %d", name, size) : g_strdup(name);
+      g_key_file_set_string(kf, GROUP, font_keys[i], font);
+      g_autofree char *encoded =
+          g_key_file_get_value(kf, GROUP, font_keys[i], NULL);
+      g_string_append_printf(migrated_fonts, "\n%s=%s\n", font_keys[i],
+                             encoded);
+      changed = TRUE;
+    }
+  }
   keys = g_key_file_get_keys(kf, GROUP, &n_keys, NULL);
 
   for (int i = 0; CONFIG_DEFAULTS[i].key != NULL; i++) {
@@ -132,6 +157,7 @@ static void migrate_config(const char *path, GKeyFile *kf) {
   }
 
   out = g_string_new(contents);
+  g_string_append(out, migrated_fonts->str);
 
   for (int i = 0; CONFIG_DEFAULTS[i].key != NULL; i++) {
     if (!g_key_file_has_key(kf, GROUP, CONFIG_DEFAULTS[i].key, NULL)) {
@@ -150,7 +176,7 @@ static void migrate_config(const char *path, GKeyFile *kf) {
   }
 
   if (cleaned) {
-    g_autofree char **lines;
+    g_auto(GStrv) lines = NULL;
     GString *clean;
     gboolean skip;
 
@@ -189,20 +215,14 @@ static void migrate_config(const char *path, GKeyFile *kf) {
   g_string_free(out, TRUE);
 }
 
-static void write_default_config(const char *path) {
-  const char *dir;
-  g_autofree char *dirpath;
-  GString *content;
-
-  dir = g_get_user_config_dir();
-  dirpath = g_build_filename(dir, CONFIG_DIR, NULL);
-  g_mkdir_with_parents(dirpath, 0700);
-
-  content = g_string_new("# promptr runtime configuration\n"
-                         "# Each key falls back to the compile-time"
-                         " default if missing.\n"
-                         "\n"
-                         "[preferences]\n");
+char *runtime_config_defaults(void) {
+  GString *content = g_string_new(
+      "# promptr runtime configuration\n"
+      "# Each key falls back to the compile-time"
+      " default if missing.\n"
+      "# Provider credentials are stored separately in the system keyring.\n"
+      "\n"
+      "[preferences]\n");
 
   for (int i = 0; CONFIG_DEFAULTS[i].key != NULL; i++) {
     if (CONFIG_DEFAULTS[i].comment != NULL) {
@@ -217,8 +237,20 @@ static void write_default_config(const char *path) {
     g_string_append_c(content, '\n');
   }
 
-  g_file_set_contents(path, content->str, -1, NULL);
-  g_string_free(content, TRUE);
+  return g_string_free(content, FALSE);
+}
+
+static void write_default_config(const char *path) {
+  g_autofree char *dirpath = g_path_get_dirname(path);
+  g_autofree char *content = runtime_config_defaults();
+  g_autoptr(GError) error = NULL;
+  if (g_mkdir_with_parents(dirpath, 0700) != 0 ||
+      !g_file_set_contents_full(path, content, -1,
+                                G_FILE_SET_CONTENTS_CONSISTENT |
+                                    G_FILE_SET_CONTENTS_DURABLE,
+                                0600, &error))
+    g_warning("Could not write default preferences: %s",
+              error != NULL ? error->message : "directory unavailable");
 }
 
 RuntimeConfig *runtime_config_load(void) {
@@ -310,4 +342,29 @@ char **runtime_config_get_string_list(RuntimeConfig *c, const char *key) {
     parts[i] = g_strstrip(parts[i]);
 
   return parts;
+}
+
+/* Merge only edited keys into the latest file so unrelated preferences survive.
+ */
+gboolean runtime_config_save_values(RuntimeConfig *c, const char *const *keys,
+                                    const char *const *values, gsize count,
+                                    GError **error) {
+  g_autofree char *path =
+      g_build_filename(g_get_user_config_dir(), CONFIG_DIR, CONFIG_FILE, NULL);
+  g_autoptr(GKeyFile) next = g_key_file_new();
+  if (!g_key_file_load_from_file(next, path, G_KEY_FILE_KEEP_COMMENTS, error))
+    return FALSE;
+  for (gsize i = 0; i < count; i++)
+    g_key_file_set_string(next, GROUP, keys[i], values[i]);
+  gsize length = 0;
+  g_autofree char *contents = g_key_file_to_data(next, &length, error);
+  if (contents == NULL ||
+      !g_file_set_contents_full(path, contents, length,
+                                G_FILE_SET_CONTENTS_CONSISTENT |
+                                    G_FILE_SET_CONTENTS_DURABLE,
+                                0600, error))
+    return FALSE;
+  g_key_file_unref(c->kf);
+  c->kf = g_steal_pointer(&next);
+  return TRUE;
 }

@@ -1,0 +1,45 @@
+{
+  "name": "openrouter",
+  "version": "2.0.0",
+  "command": "promptr-openrouter",
+  "description": "OpenRouter API provider",
+  "homepage": "https://openrouter.ai",
+  "type": "provider",
+  "methods": [
+    "provider/initialize",
+    "provider/submit",
+    "provider/cancel",
+    "provider/models",
+    "provider/shutdown"
+  ],
+  "config_schema": {
+    "api_key": {
+      "type": "string",
+      "required": true,
+      "secret": true,
+      "comment": "OpenRouter API key (or set OPENROUTER_API_KEY env var)",
+      "label": "API key"
+    },
+    "base_url": {
+      "type": "string",
+      "default": "https://openrouter.ai/api/v1",
+      "comment": "Custom base URL",
+      "label": "API endpoint",
+      "advanced": true
+    }
+  },
+  "manifest_version": 1,
+  "protocol_versions": [
+    "2.0"
+  ],
+  "bundled_profile": {
+    "id": "bb9b90be-53d6-4b53-a3c8-940aa571bba9",
+    "name": "OpenRouter",
+    "model": "openai/gpt-4o-mini"
+  },
+  "models": [
+    "openai/gpt-4o-mini",
+    "openrouter/auto"
+  ],
+  "setup_hint": "Enter your API key below, or leave it blank to use OPENROUTER_API_KEY. Entered keys are stored in your system keyring."
+}

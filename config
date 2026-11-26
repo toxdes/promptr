@@ -1,5 +1,6 @@
 # promptr runtime configuration
 # Each key falls back to the compile-time default if missing.
+# Provider credentials are stored separately in the system keyring.
 
 [preferences]
 # Window size in pixels
@@ -25,14 +26,14 @@ kb_shortcuts=<Control>F1
 kb_submit=<Control>Return
 kb_cancel=
 
-# Path to the opencode binary
-opencode_path=opencode
+# Default provider profile UUID or plugin name
+provider=openrouter
 
-# Agent dropdown options (comma-separated, first=default)
-agent_options=linux_cmd,None
+# Legacy agent options (selection now uses Markdown files)
+agent_options=None
 
-# Model dropdown options (comma-separated, first=default)
-model_options=opencode-go/deepseek-v4-flash,opencode-go/deepseek-v4-pro,opencode/big-pickle,opencode/deepseek-v4-flash-free,None
+# Legacy model options (selection now uses provider profiles)
+model_options=None
 
 # Default marked lines on output (0=all, -1=none, or comma-separated 1-based)
 marked_lines=1
@@ -43,11 +44,14 @@ decorated=1
 # Command section expanded by default (0 or 1)
 command_expanded=0
 
-# Font size in pt for prompt text (0 = system default)
-prompt_font_size=0
+# Font for query editor (Pango description; omit size for system default)
+query_font=Monospace
 
-# Font size in pt for output text (0 = system default)
-output_font_size=0
+# Font for answer editor (Pango description; omit size for system default)
+answer_font=Monospace
+
+# Show line numbers in prompt and output editors (0 or 1)
+editor_line_numbers=1
 
 # GSK renderer backend (set before gtk_init, not switchable at runtime):
 #   cairo  - software (CPU), no GPU allocations, ~half baseline memory

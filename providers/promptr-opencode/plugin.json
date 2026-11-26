@@ -1,0 +1,39 @@
+{
+  "name": "opencode",
+  "version": "2.0.0",
+  "command": "promptr-opencode",
+  "description": "OpenCode CLI provider",
+  "type": "provider",
+  "methods": [
+    "provider/initialize",
+    "provider/submit",
+    "provider/cancel",
+    "provider/models",
+    "provider/shutdown"
+  ],
+  "config_schema": {
+    "opencode_path": {
+      "type": "string",
+      "default": "opencode",
+      "comment": "Path to the opencode binary",
+      "label": "OpenCode executable",
+      "advanced": true
+    }
+  },
+  "manifest_version": 1,
+  "protocol_versions": [
+    "2.0"
+  ],
+  "bundled_profile": {
+    "id": "42a55815-ec2d-4706-91f2-e23239460b42",
+    "name": "OpenCode",
+    "model": ""
+  },
+  "models": [
+    "opencode-go/deepseek-v4-flash",
+    "opencode-go/deepseek-v4-pro",
+    "opencode/big-pickle",
+    "opencode/deepseek-v4-flash-free"
+  ],
+  "setup_hint": "Uses your existing OpenCode login and model access. To sign in, run opencode auth login in a terminal."
+}
