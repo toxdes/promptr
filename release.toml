@@ -2,7 +2,7 @@
 id = "promptr"
 name = "Promptr"
 version_file = "VERSION"
-description = "GTK4 overlay prompt for opencode"
+description = "Native GTK4 chat frontend with independent provider plugins"
 homepage = "https://github.com/toxdes/promptr"
 repository = "https://github.com/toxdes/promptr"
 license = "MIT"
@@ -29,18 +29,30 @@ binary = "promptr"
 
 [package.deb]
 assets = [
+  { source = "providers/promptr-opencode/promptr-opencode", dest = "/usr/lib/promptr/plugins/opencode/promptr-opencode", mode = 493 },
+  { source = "providers/promptr-opencode/plugin.json", dest = "/usr/lib/promptr/plugins/opencode/plugin.json", mode = 420 },
+  { source = "providers/promptr-openrouter/promptr-openrouter", dest = "/usr/lib/promptr/plugins/openrouter/promptr-openrouter", mode = 493 },
+  { source = "providers/promptr-openrouter/plugin.json", dest = "/usr/lib/promptr/plugins/openrouter/plugin.json", mode = 420 },
   { source = "data/promptr.svg", dest = "/usr/share/icons/hicolor/scalable/apps/promptr.svg", mode = 420 },
   { source = "com.toxdes.promptr.desktop", dest = "/usr/share/applications/com.toxdes.promptr.desktop", mode = 420 },
 ]
 
 [package.rpm]
 assets = [
+  { source = "providers/promptr-opencode/promptr-opencode", dest = "/usr/lib/promptr/plugins/opencode/promptr-opencode", mode = 493 },
+  { source = "providers/promptr-opencode/plugin.json", dest = "/usr/lib/promptr/plugins/opencode/plugin.json", mode = 420 },
+  { source = "providers/promptr-openrouter/promptr-openrouter", dest = "/usr/lib/promptr/plugins/openrouter/promptr-openrouter", mode = 493 },
+  { source = "providers/promptr-openrouter/plugin.json", dest = "/usr/lib/promptr/plugins/openrouter/plugin.json", mode = 420 },
   { source = "data/promptr.svg", dest = "/usr/share/icons/hicolor/scalable/apps/promptr.svg", mode = 420 },
   { source = "com.toxdes.promptr.desktop", dest = "/usr/share/applications/com.toxdes.promptr.desktop", mode = 420 },
 ]
 
 [package.archive]
 assets = [
+  { source = "providers/promptr-opencode/promptr-opencode", dest = "/usr/lib/promptr/plugins/opencode/promptr-opencode", mode = 493 },
+  { source = "providers/promptr-opencode/plugin.json", dest = "/usr/lib/promptr/plugins/opencode/plugin.json", mode = 420 },
+  { source = "providers/promptr-openrouter/promptr-openrouter", dest = "/usr/lib/promptr/plugins/openrouter/promptr-openrouter", mode = 493 },
+  { source = "providers/promptr-openrouter/plugin.json", dest = "/usr/lib/promptr/plugins/openrouter/plugin.json", mode = 420 },
   { source = "data/promptr.svg", dest = "/usr/share/icons/hicolor/scalable/apps/promptr.svg", mode = 420 },
   { source = "com.toxdes.promptr.desktop", dest = "/usr/share/applications/com.toxdes.promptr.desktop", mode = 420 },
 ]
@@ -61,6 +73,7 @@ depends = [
   "libgtk4-layer-shell0",
   "libcurl4t64",
   "libjson-glib-1.0-0",
+  "libsecret-1-0",
 ]
 
 [rpm]
@@ -74,6 +87,7 @@ requires = [
   "gtk4-layer-shell",
   "libcurl",
   "json-glib",
+  "libsecret",
 ]
 
 [aur]
@@ -81,7 +95,7 @@ binary_package = "promptr-bin"
 git_package = "promptr-git"
 srcinfo_helper_image = "docker.io/toxdes/yesb-aur-helper@sha256:e0b511b58baf4d1e281b154a50fd15125f886472dc7166a4aa578cb7a40435ea"
 architectures = ["x86_64", "aarch64"]
-depends = ["gtk4", "gtksourceview5", "gtk4-layer-shell", "curl", "json-glib"]
+depends = ["gtk4", "gtksourceview5", "gtk4-layer-shell", "curl", "json-glib", "libsecret"]
 source_pkgbuild = "PKGBUILD.source"
 git_pkgbuild = "PKGBUILD"
 

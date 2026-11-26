@@ -5,7 +5,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential gcc make pkg-config python3 curl ca-certificates \
     libgtk-4-dev libgtksourceview-5-dev libgtk4-layer-shell-dev \
-    libcurl4-openssl-dev libjson-glib-dev \
+    libcurl4-openssl-dev libjson-glib-dev libsecret-1-dev \
     dpkg-dev rpm \
     && update-ca-certificates \
     && rm -rf /var/lib/apt/lists/*
@@ -32,7 +32,10 @@ RUN if [ "$INCLUDE_APPIMAGE" = "1" ]; then \
 COPY . /build
 WORKDIR /build
 
-RUN make clean && make BUILD=${BUILD}
+RUN make clean && make BUILD=${BUILD} PREFIX=/usr && make BUILD=${BUILD} PREFIX=/usr providers
+RUN if [ "$INCLUDE_APPIMAGE" = "1" ]; then \
+      python3 scripts/stage-appimage-providers.py /tmp/appdir; \
+    fi
 RUN mkdir -p /output && python3 yesb/package.py
 
 FROM scratch
