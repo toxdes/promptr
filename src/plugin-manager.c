@@ -1,8 +1,13 @@
 #include "plugin-manager.h"
+#include "../lib/promptr-protocol/jsonrpc.h"
 #include "config.h"
 #include "configfile.h"
 #include <errno.h>
 #include <string.h>
+
+#ifndef PROMPTR_PLUGIN_DIR_DEFAULT
+#define PROMPTR_PLUGIN_DIR_DEFAULT "/usr/local/lib/promptr/plugins"
+#endif
 
 typedef struct {
   GHashTable *manifests;
@@ -21,9 +26,14 @@ static void manifest_free(gpointer data) {
   g_free(m->command);
   g_free(m->command_path);
   g_free(m->description);
+  g_free(m->setup_hint);
   g_free(m->homepage);
   g_free(m->type);
   g_strfreev(m->methods);
+  g_free(m->profile_id);
+  g_free(m->profile_name);
+  g_free(m->default_model);
+  g_strfreev(m->models);
   if (m->config_schema != NULL)
     json_node_free(m->config_schema);
   g_free(m);
@@ -43,19 +53,59 @@ static PluginManifest *manifest_parse(const char *path) {
   }
 
   root = json_parser_get_root(parser);
-  if (root == NULL || JSON_NODE_HOLDS_VALUE(root))
+  if (root == NULL || !JSON_NODE_HOLDS_OBJECT(root))
     return NULL;
 
   obj = json_node_get_object(root);
 
-  if (!json_object_has_member(obj, "name"))
+  if (protocol_string(obj, "name") == NULL)
     return NULL;
-  if (!json_object_has_member(obj, "command"))
+  if (protocol_string(obj, "command") == NULL)
+    return NULL;
+  JsonNode *manifest_version = json_object_get_member(obj, "manifest_version");
+  JsonNode *versions = json_object_get_member(obj, "protocol_versions");
+  gboolean compatible = FALSE;
+  if (manifest_version == NULL || !JSON_NODE_HOLDS_VALUE(manifest_version) ||
+      json_node_get_value_type(manifest_version) != G_TYPE_INT64 ||
+      json_node_get_int(manifest_version) != 1 || versions == NULL ||
+      !JSON_NODE_HOLDS_ARRAY(versions))
+    return NULL;
+  JsonArray *supported = json_node_get_array(versions);
+  for (guint i = 0; i < json_array_get_length(supported); i++) {
+    JsonNode *v = json_array_get_element(supported, i);
+    if (JSON_NODE_HOLDS_VALUE(v) &&
+        json_node_get_value_type(v) == G_TYPE_STRING &&
+        g_strcmp0(json_node_get_string(v), PROMPTR_PROTOCOL_VERSION) == 0)
+      compatible = TRUE;
+  }
+  if (!compatible || (protocol_string(obj, "type") != NULL &&
+                      g_strcmp0(protocol_string(obj, "type"), "provider") != 0))
     return NULL;
 
   m = g_new0(PluginManifest, 1);
   m->name = g_strdup(json_object_get_string_member(obj, "name"));
   m->command = g_strdup(json_object_get_string_member(obj, "command"));
+  JsonObject *preset = protocol_object(obj, "bundled_profile");
+  const char *preset_id = protocol_string(preset, "id");
+  if (preset_id != NULL && g_uuid_string_is_valid(preset_id)) {
+    m->profile_id = g_strdup(preset_id);
+    m->profile_name = g_strdup(protocol_string(preset, "name"));
+    m->default_model = g_strdup(protocol_string(preset, "model"));
+  }
+  JsonNode *model_list = json_object_get_member(obj, "models");
+  if (model_list != NULL && JSON_NODE_HOLDS_ARRAY(model_list)) {
+    JsonArray *array = json_node_get_array(model_list);
+    g_autoptr(GPtrArray) values = g_ptr_array_new_with_free_func(g_free);
+    for (guint i = 0; i < json_array_get_length(array) && i < 10000; i++) {
+      JsonNode *value = json_array_get_element(array, i);
+      if (JSON_NODE_HOLDS_VALUE(value) &&
+          json_node_get_value_type(value) == G_TYPE_STRING &&
+          strlen(json_node_get_string(value)) <= 1024)
+        g_ptr_array_add(values, g_strdup(json_node_get_string(value)));
+    }
+    g_ptr_array_add(values, NULL);
+    m->models = (char **)g_ptr_array_free(g_steal_pointer(&values), FALSE);
+  }
 
   /* Resolve command to absolute path */
   {
@@ -68,23 +118,24 @@ static PluginManifest *manifest_parse(const char *path) {
       m->command_path = g_strdup(m->command);
   }
 
-  if (json_object_has_member(obj, "version"))
-    m->version = g_strdup(json_object_get_string_member(obj, "version"));
+  m->version = g_strdup(protocol_string(obj, "version"));
+  m->setup_hint = g_strdup(protocol_string(obj, "setup_hint"));
 
   if (json_object_has_member(obj, "description"))
-    m->description =
-        g_strdup(json_object_get_string_member(obj, "description"));
+    m->description = g_strdup(protocol_string(obj, "description"));
 
   if (json_object_has_member(obj, "homepage"))
-    m->homepage = g_strdup(json_object_get_string_member(obj, "homepage"));
+    m->homepage = g_strdup(protocol_string(obj, "homepage"));
 
   if (json_object_has_member(obj, "type"))
-    m->type = g_strdup(json_object_get_string_member(obj, "type"));
+    m->type = g_strdup(protocol_string(obj, "type"));
   else
     m->type = g_strdup("provider");
 
   if (json_object_has_member(obj, "methods")) {
-    JsonArray *arr = json_object_get_array_member(obj, "methods");
+    JsonNode *methods = json_object_get_member(obj, "methods");
+    JsonArray *arr =
+        JSON_NODE_HOLDS_ARRAY(methods) ? json_node_get_array(methods) : NULL;
 
     if (arr != NULL) {
       GPtrArray *strs = g_ptr_array_new();
@@ -104,8 +155,29 @@ static PluginManifest *manifest_parse(const char *path) {
   if (json_object_has_member(obj, "config_schema")) {
     JsonNode *schema = json_object_get_member(obj, "config_schema");
 
-    if (schema != NULL)
+    if (schema != NULL && JSON_NODE_HOLDS_OBJECT(schema)) {
+      JsonObject *fields = json_node_get_object(schema);
+      g_autoptr(GList) keys = json_object_get_members(fields);
+      for (GList *it = keys; it != NULL; it = it->next) {
+        JsonObject *field = protocol_object(fields, it->data);
+        const char *type = protocol_string(field, "type");
+        if (g_strcmp0(type, "string") != 0 && g_strcmp0(type, "boolean") != 0 &&
+            g_strcmp0(type, "number") != 0 && g_strcmp0(type, "choice") != 0) {
+          manifest_free(m);
+          return NULL;
+        }
+        JsonNode *secret = json_object_get_member(field, "secret");
+        if (secret != NULL &&
+            (!JSON_NODE_HOLDS_VALUE(secret) ||
+             json_node_get_value_type(secret) != G_TYPE_BOOLEAN ||
+             (json_node_get_boolean(secret) &&
+              g_strcmp0(type, "string") != 0))) {
+          manifest_free(m);
+          return NULL;
+        }
+      }
       m->config_schema = json_node_copy(schema);
+    }
   }
 
   return m;
@@ -166,10 +238,24 @@ void plugin_manager_scan(void) {
   }
 
   {
-    g_autofree char *sys_dir =
-        g_build_filename("/usr", "lib", DATA_DIR_SUFFIX, "plugins", NULL);
-
-    scan_dir(sys_dir);
+    /* Find bundled adapters after a custom-prefix install or archive
+     * relocation, even when the build used a different PREFIX. No
+     * current-directory lookup. */
+    g_autofree char *exe = g_file_read_link("/proc/self/exe", NULL);
+    if (exe != NULL) {
+      g_autofree char *bin = g_path_get_dirname(exe);
+      g_autofree char *prefix = g_path_get_dirname(bin);
+      g_autofree char *bundled =
+          g_build_filename(prefix, "lib", "promptr", "plugins", NULL);
+      scan_dir(bundled);
+      /* A source checkout keeps bundled plugins next to the debug executable.
+       * Resolve from the executable, never from an arbitrary working directory.
+       */
+      g_autofree char *development = g_build_filename(bin, "providers", NULL);
+      scan_dir(development);
+    }
+    scan_dir(PROMPTR_PLUGIN_DIR_DEFAULT);
+    scan_dir("/usr/lib/promptr/plugins");
   }
 
   g_ptr_array_add(state.names, NULL);

@@ -18,12 +18,22 @@ typedef struct _AppWindow {
   GtkWidget *log_popup;
   GtkWidget *shortcuts_popup;
   GSimpleAction *provider_action;
+  GSimpleActionGroup *actions;
   GMenu *provider_submenu;
   GMenu *agent_section_menu;
   GMenu *model_section_menu;
+  GHashTable *model_catalogs;
+  GCancellable *model_cancel;
+  char *model_profile;
+  guint model_generation;
+  gboolean model_pending;
+  gpointer model_owner;
   FILE *log_file;
 
   gboolean destroyed;
+  gboolean restoring_session;
+  gboolean quitting;
+  guint status_timeout;
 
   RuntimeConfig *config;
 
@@ -82,9 +92,15 @@ void app_window_present(AppWindow *win);
 void app_window_close_and_quit(AppWindow *win);
 void app_window_free(gpointer data);
 Tab *app_window_get_active_tab(AppWindow *win);
+void app_window_providers_changed(AppWindow *win);
+void app_window_refresh_models(AppWindow *win);
+void app_window_apply_editor_preferences(AppWindow *win);
+void app_window_reload_shortcuts(AppWindow *win);
 
 void log_append(AppWindow *win, const char *fmt, ...)
     __attribute__((format(printf, 2, 3)));
+
+GtkWindow *app_window_dialog_parent(GtkWindow *parent);
 
 void show_error_dialog(GtkWindow *parent, const char *title,
                        const char *detail);

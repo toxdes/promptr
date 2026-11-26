@@ -1,127 +1,106 @@
 #include "tab.h"
-#include "command.h"
 #include "config.h"
 #include "provider-manager.h"
+#include "provider-profile.h"
 #include "window.h"
-#include <gio/gio.h>
-#include <stdlib.h>
+#include <errno.h>
+#include <glib/gstdio.h>
+#include <gtksourceview/gtksource.h>
+#include <stdio.h>
+#include <string.h>
 
-static char *tabs_dir(void) {
-  const char *data_dir;
-  g_autofree char *dir = NULL;
-
-  data_dir = g_get_user_data_dir();
-  dir = g_build_filename(data_dir, DATA_DIR_SUFFIX, "tabs", NULL);
-  g_mkdir_with_parents(dir, 0700);
-  return g_strdup(dir);
+static char *tab_path(const char *id, const char *suffix) {
+  g_autofree char *dir = thread_store_directory();
+  g_autofree char *name = g_strconcat(id, suffix, NULL);
+  return g_build_filename(dir, name, NULL);
 }
 
-/* Only show one provider-error dialog per session */
-static gboolean provider_error_shown = FALSE;
-
-static char *tmp_root(void) {
-  const char *data_dir;
-  g_autofree char *dir = NULL;
-
-  data_dir = g_get_user_data_dir();
-  dir = g_build_filename(data_dir, DATA_DIR_SUFFIX, "tmp", NULL);
-  g_mkdir_with_parents(dir, 0700);
-  return g_strdup(dir);
-}
-
-/* ── conversation history helpers ─────────────────────────────── */
-
-void tab_history_add(Tab *tab, ProviderRole role, const char *content) {
-  if (tab == NULL || content == NULL)
-    return;
-  if (tab->n_messages >= tab->messages_cap) {
-    tab->messages_cap = tab->messages_cap == 0 ? 8 : tab->messages_cap * 2;
-    tab->messages = g_renew(ProviderMessage, tab->messages, tab->messages_cap);
+GKeyFile *tab_read_metadata(const char *uuid) {
+  if (!g_uuid_string_is_valid(uuid))
+    return NULL;
+  g_autofree char *path = tab_path(uuid, ".meta");
+  GKeyFile *kf = g_key_file_new();
+  if (g_key_file_load_from_file(kf, path, G_KEY_FILE_NONE, NULL))
+    return kf;
+  g_free(path);
+  path = tab_path(uuid, ".conf");
+  FILE *file = g_fopen(path, "r");
+  if (file == NULL) {
+    g_key_file_unref(kf);
+    return NULL;
   }
-  tab->messages[tab->n_messages].role = role;
-  tab->messages[tab->n_messages].content = g_strdup(content);
-  tab->n_messages++;
-}
-
-void tab_history_clear(Tab *tab) {
-  if (tab == NULL)
-    return;
-  for (int i = 0; i < tab->n_messages; i++)
-    g_free(tab->messages[i].content);
-  g_free(tab->messages);
-  tab->messages = NULL;
-  tab->n_messages = 0;
-  tab->messages_cap = 0;
-}
-
-char *tab_history_render_display(Tab *tab, const char *current_output) {
-  GString *s;
-  int n_pairs;
-
-  if (tab == NULL)
-    return g_strdup(current_output != NULL ? current_output : "");
-
-  s = g_string_new(current_output != NULL ? current_output : "");
-  n_pairs = tab->n_messages / 2;
-
-  for (int i = n_pairs - 2; i >= 0; i--) {
-    const char *q = tab->messages[i * 2].content;
-    const char *a = tab->messages[i * 2 + 1].content;
-
-    g_string_append_printf(s, "\n---\nQ.%d: %s\nA: %s", i + 1,
-                           q != NULL ? q : "", a != NULL ? a : "");
+  /* Legacy messages share this file: read only the lightweight [tab] section.
+   */
+  g_autoptr(GString) meta = g_string_new(NULL);
+  char line[8192];
+  gboolean in_tab = FALSE;
+  while (fgets(line, sizeof(line), file) != NULL) {
+    if (line[0] == '[') {
+      if (in_tab)
+        break;
+      in_tab = g_str_has_prefix(line, "[tab]");
+    }
+    if (in_tab)
+      g_string_append(meta, line);
   }
-
-  return g_string_free(s, FALSE);
+  fclose(file);
+  if (!g_key_file_load_from_data(kf, meta->str, meta->len, G_KEY_FILE_NONE,
+                                 NULL)) {
+    g_key_file_unref(kf);
+    return NULL;
+  }
+  return kf;
 }
 
-/* ── tab lifecycle ────────────────────────────────────────────── */
-
-Tab *tab_new(AppWindow *win, const char *name) {
-  Tab *tab;
-
-  tab = g_new0(Tab, 1);
+static Tab *tab_allocate(AppWindow *win, const char *name,
+                         gboolean choose_profile) {
+  Tab *tab = g_new0(Tab, 1);
   tab->win = win;
   tab->id = g_uuid_string_random();
   tab->name = g_strdup(name);
-  tab->has_activity = FALSE;
   tab->is_open = TRUE;
-  tab->state = 0;
   tab->ref_count = 1;
-
-  {
-    g_autofree char *root = NULL;
-
-    root = tmp_root();
-    tab->tmpdir_path = g_build_filename(root, tab->id, NULL);
-  }
-
-  /* Create per-tab provider from config */
-  {
-    g_autofree char *err_msg = NULL;
-
-    if (win != NULL && win->config != NULL) {
-      tab->provider_name =
-          runtime_config_get_string(win->config, "provider", PROVIDER_DEFAULT);
-      tab->provider = provider_manager_create_or_fallback(
-          win->config, tab->provider_name, &err_msg);
-      if (err_msg != NULL) {
-        g_warning("Provider '%s' for new tab failed, fell back to opencode: %s",
-                  tab->provider_name, err_msg);
+  tab->history_cursor = -1;
+  tab->provider_name =
+      runtime_config_get_string(win->config, "provider", PROVIDER_DEFAULT);
+  if (choose_profile) {
+    g_autoptr(GPtrArray) profiles = provider_profile_list();
+    if (!g_uuid_string_is_valid(tab->provider_name)) {
+      const char *preferred =
+          *tab->provider_name ? tab->provider_name : PROVIDER_DEFAULT;
+      ProviderProfile *fallback = NULL;
+      for (guint i = 0; i < profiles->len; i++) {
+        ProviderProfile *p = g_ptr_array_index(profiles, i);
+        if (!p->tested && !p->bundled)
+          continue;
+        if (fallback == NULL)
+          fallback = p;
+        if (g_strcmp0(p->plugin, preferred) == 0) {
+          fallback = p;
+          break;
+        }
+      }
+      if (fallback != NULL) {
         g_free(tab->provider_name);
-        tab->provider_name = g_strdup("opencode");
+        tab->provider_name = g_strdup(fallback->id);
       }
     }
-
-    if (err_msg != NULL && win != NULL && win->window != NULL &&
-        !provider_error_shown) {
-      provider_error_shown = TRUE;
-      show_error_dialog(GTK_WINDOW(win->window), "Provider Not Available",
-                        err_msg);
-    }
   }
-
+  tab->selected_agent = g_strdup("None");
+  g_autoptr(ProviderProfile) selected =
+      choose_profile ? provider_profile_load(tab->provider_name, NULL) : NULL;
+  tab->selected_model =
+      g_strdup(selected != NULL && selected->model != NULL && *selected->model
+                   ? selected->model
+                   : "None");
+  tab->draft = g_strdup("");
+  tab->marked_lines_str = runtime_config_get_string(win->config, "marked_lines",
+                                                    DEFAULT_MARKED_LINES_STR);
   return tab;
+}
+
+Tab *tab_new(AppWindow *win, const char *name) {
+  return tab_allocate(win, name, TRUE);
 }
 
 Tab *tab_ref(Tab *tab) {
@@ -130,39 +109,81 @@ Tab *tab_ref(Tab *tab) {
   return tab;
 }
 
-static void tab_free(Tab *tab) {
-  if (tab == NULL)
+void tab_capture_input(Tab *tab) {
+  if (!tab->hydrated || tab->restoring_draft)
     return;
+  if (GTK_IS_TEXT_VIEW(tab->prompt_view)) {
+    GtkTextBuffer *buf =
+        gtk_text_view_get_buffer(GTK_TEXT_VIEW(tab->prompt_view));
+    GtkTextIter start, end;
+    gtk_text_buffer_get_bounds(buf, &start, &end);
+    g_free(tab->draft);
+    tab->draft = gtk_text_buffer_get_text(buf, &start, &end, FALSE);
+    if (tab->draft != NULL && *tab->draft)
+      tab->has_activity = TRUE;
+  }
+  g_free(tab->selected_agent);
+  tab->selected_agent = get_selected_text(tab->agent_dropdown);
+  g_free(tab->selected_model);
+  tab->selected_model = get_selected_text(tab->model_dropdown);
+}
 
-  if (tab->subprocess != NULL)
-    command_cancel(tab);
+void tab_release_view(Tab *tab) {
+  if (!tab->hydrated)
+    return;
+  tab_capture_input(tab);
+  tab->hydrated = FALSE;
+  tab->view_generation++;
+  tab->loading_history = FALSE;
+  GtkWidget *child = gtk_widget_get_first_child(tab->page);
+  if (child != NULL)
+    gtk_box_remove(GTK_BOX(tab->page), child);
+  GtkWidget *owned[] = {tab->prompt_section, tab->fu_row,     tab->agent_row,
+                        tab->output_section, tab->marked_row, tab->action_row,
+                        tab->pane_left,      tab->pane_right, tab->copy_btn};
+  for (guint i = 0; i < G_N_ELEMENTS(owned); i++)
+    if (owned[i] != NULL)
+      g_object_unref(owned[i]);
+  tab->prompt_view = NULL;
+  tab->output_view = NULL;
+  tab->agent_dropdown = NULL;
+  tab->model_dropdown = NULL;
+  tab->content_stack = NULL;
+  tab->prompt_section = NULL;
+  tab->output_section = NULL;
+  tab->fu_row = NULL;
+  tab->agent_row = NULL;
+  tab->marked_row = NULL;
+  tab->action_row = NULL;
+  tab->pane_left = NULL;
+  tab->pane_right = NULL;
+  tab->paned_positioned = FALSE;
+  tab->copy_btn = NULL;
+  g_clear_pointer(&tab->draft, g_free);
+  if (tab->state != STATE_LOADING && !tab->storage_failed) {
+    thread_store_unref(tab->store);
+    tab->store = NULL;
+  }
+}
 
-  g_clear_object(&tab->cancellable);
-  g_clear_object(&tab->subprocess);
-
-  /* Notify provider to clean up per-tab state (tmpdir, active_tab, etc.) */
-  if (tab->provider != NULL && tab->provider->vtable->cleanup_session != NULL)
-    tab->provider->vtable->cleanup_session(tab->provider->impl, tab);
-
-  /* Destroy the per-tab provider */
+static void tab_free(Tab *tab) {
   if (tab->provider != NULL)
     provider_manager_destroy(tab->provider);
-
-  for (int i = 0; i < tab->n_messages; i++)
-    g_free(tab->messages[i].content);
-  g_free(tab->messages);
-
-  g_list_free_full(tab->qa_history, g_free);
+  g_clear_object(&tab->cancellable);
+  if (tab->hydrated)
+    tab_release_view(tab);
+  thread_store_unref(tab->store);
   g_free(tab->id);
   g_free(tab->name);
-  g_free(tab->page_name);
-  g_free(tab->tmpdir_path);
-  g_free(tab->last_query);
-  g_free(tab->last_output);
   g_free(tab->provider_name);
   g_free(tab->cmd_string);
   g_free(tab->marked_lines_str);
-
+  g_free(tab->selected_agent);
+  g_free(tab->selected_model);
+  g_free(tab->draft);
+  g_free(tab->project_dir);
+  g_free(tab->request_id);
+  g_free(tab->request_profile);
   g_free(tab);
 }
 
@@ -171,342 +192,163 @@ void tab_unref(Tab *tab) {
     tab_free(tab);
 }
 
-void remove_dir(const char *path) {
-  GDir *dir;
-  const char *name;
-
-  dir = g_dir_open(path, 0, NULL);
-  if (dir != NULL) {
-    while ((name = g_dir_read_name(dir)) != NULL) {
-      g_autofree char *fpath = g_build_filename(path, name, NULL);
-
-      if (g_file_test(fpath, G_FILE_TEST_IS_DIR))
-        remove_dir(fpath);
-      else
-        unlink(fpath);
-    }
-    g_dir_close(dir);
+static gboolean tab_save_marks(Tab *tab, GError **error) {
+  if (!tab->hydrated || tab->loading_history || tab->state == STATE_LOADING ||
+      !GTK_IS_TEXT_VIEW(tab->output_view))
+    return TRUE;
+  GtkTextBuffer *buffer =
+      gtk_text_view_get_buffer(GTK_TEXT_VIEW(tab->output_view));
+  GtkTextIter start, end, iter;
+  gtk_text_buffer_get_bounds(buffer, &start, &end);
+  g_autofree char *text = gtk_text_buffer_get_text(buffer, &start, &end, FALSE);
+  if (text == NULL || !*text)
+    return TRUE;
+  g_autofree char *hash =
+      g_compute_checksum_for_string(G_CHECKSUM_SHA256, text, -1);
+  g_autoptr(GString) marks = g_string_new(NULL);
+  iter = start;
+  GSList *first = gtk_source_buffer_get_source_marks_at_iter(
+      GTK_SOURCE_BUFFER(buffer), &iter, "promptr-mark");
+  if (first != NULL)
+    g_string_append(marks, "1");
+  g_slist_free(first);
+  while (gtk_source_buffer_forward_iter_to_source_mark(
+      GTK_SOURCE_BUFFER(buffer), &iter, "promptr-mark")) {
+    if (marks->len > 0)
+      g_string_append_c(marks, ',');
+    g_string_append_printf(marks, "%d", gtk_text_iter_get_line(&iter) + 1);
   }
-  rmdir(path);
+  g_autofree char *path = tab_path(tab->id, ".marks");
+  g_autoptr(GKeyFile) saved = g_key_file_new();
+  g_key_file_load_from_file(saved, path, G_KEY_FILE_NONE, NULL);
+  g_autofree char *previous = g_key_file_get_string(saved, "marks", hash, NULL);
+  const char *selection = marks->len > 0 ? marks->str : "-1";
+  if (g_strcmp0(previous, selection) == 0)
+    return TRUE;
+  g_key_file_set_string(saved, "marks", hash, selection);
+  g_autofree char *data = g_key_file_to_data(saved, NULL, NULL);
+  g_autofree char *dir = thread_store_directory();
+  if (g_mkdir_with_parents(dir, 0700) != 0) {
+    g_set_error(error, G_IO_ERROR, g_io_error_from_errno(errno),
+                "Save output marks: %s", g_strerror(errno));
+    return FALSE;
+  }
+  return g_file_set_contents_full(path, data, -1,
+                                  G_FILE_SET_CONTENTS_CONSISTENT, 0600, error);
 }
 
-void tab_save(Tab *tab) {
-  g_autofree char *dir = NULL;
-  g_autofree char *conf_path = NULL;
-  g_autofree char *txt_path = NULL;
-  g_autofree char *data = NULL;
-  g_autoptr(GKeyFile) kf = NULL;
-  char timestr[64];
-  time_t now;
-  struct tm tm;
-
+gboolean tab_save(Tab *tab) {
   if (tab == NULL || tab->id == NULL)
-    return;
-
-  dir = tabs_dir();
-  conf_path = g_strdup_printf("%s/%s.conf", dir, tab->id);
-
-  kf = g_key_file_new();
-  g_key_file_set_integer(kf, "tab", "version", 2);
+    return FALSE;
+  tab_capture_input(tab);
+  g_autofree char *dir = thread_store_directory();
+  g_autofree char *path = tab_path(tab->id, ".meta");
+  g_autoptr(GKeyFile) kf = g_key_file_new();
+  g_key_file_set_integer(kf, "tab", "version", 3);
+  g_key_file_set_integer(kf, "tab", "state", tab->state);
   g_key_file_set_string(kf, "tab", "name", tab->name);
-  g_key_file_set_integer(kf, "tab", "layout", tab->layout_mode);
   g_key_file_set_boolean(kf, "tab", "is_open", tab->is_open);
-  g_key_file_set_boolean(kf, "tab", "has_activity", tab->has_activity);
+  g_key_file_set_boolean(kf, "tab", "has_activity",
+                         tab->has_activity ||
+                             (tab->draft != NULL && *tab->draft));
   g_key_file_set_boolean(kf, "tab", "follow_up", tab->follow_up);
-  if (tab->provider_name != NULL)
-    g_key_file_set_string(kf, "tab", "provider", tab->provider_name);
-
-  {
-    char *agent, *model;
-
-    agent = tab->agent_dropdown != NULL ? get_selected_text(tab->agent_dropdown)
-                                        : NULL;
-    model = tab->model_dropdown != NULL ? get_selected_text(tab->model_dropdown)
-                                        : NULL;
-    if (agent != NULL)
-      g_key_file_set_string(kf, "tab", "agent", agent);
-    if (model != NULL)
-      g_key_file_set_string(kf, "tab", "model", model);
-    g_free(agent);
-    g_free(model);
+  g_key_file_set_boolean(kf, "tab", "unread", tab->has_unseen_output);
+  g_key_file_set_integer(kf, "tab", "layout", tab->layout_mode);
+  g_key_file_set_string(kf, "tab", "provider",
+                        tab->provider_name != NULL ? tab->provider_name : "");
+  g_key_file_set_string(kf, "tab", "agent",
+                        tab->selected_agent != NULL ? tab->selected_agent
+                                                    : "None");
+  g_key_file_set_string(kf, "tab", "model",
+                        tab->selected_model != NULL ? tab->selected_model
+                                                    : "None");
+  g_key_file_set_string(kf, "tab", "project",
+                        tab->project_dir != NULL ? tab->project_dir : "");
+  g_autoptr(GDateTime) now = g_date_time_new_now_utc();
+  g_autofree char *time = g_date_time_format_iso8601(now);
+  g_key_file_set_string(kf, "tab", "time", time);
+  g_autofree char *data = g_key_file_to_data(kf, NULL, NULL);
+  g_autoptr(GError) error = NULL;
+  if (!tab_save_marks(tab, &error)) {
+    g_warning("Could not save output marks: %s", error->message);
+    tab->storage_failed = TRUE;
+    return FALSE;
   }
-
-  now = time(NULL);
-  localtime_r(&now, &tm);
-  strftime(timestr, sizeof(timestr), "%Y-%m-%dT%H:%M:%SZ", &tm);
-  g_key_file_set_string(kf, "tab", "time", timestr);
-
-  g_key_file_set_integer(kf, "messages", "count", tab->n_messages);
-  for (int i = 0; i < tab->n_messages; i++) {
-    g_autofree char *group = g_strdup_printf("msg_%d", i);
-    const char *role_str;
-
-    switch (tab->messages[i].role) {
-    case PROVIDER_ROLE_ASSISTANT:
-      role_str = "assistant";
-      break;
-    case PROVIDER_ROLE_SYSTEM:
-      role_str = "system";
-      break;
-    default:
-      role_str = "user";
-      break;
+  if (tab->hydrated && !tab->restoring_draft) {
+    g_autofree char *prompt_path = tab_path(tab->id, ".prompt");
+    if (g_mkdir_with_parents(dir, 0700) != 0 ||
+        !g_file_set_contents_full(
+            prompt_path, tab->draft != NULL ? tab->draft : "", -1,
+            G_FILE_SET_CONTENTS_CONSISTENT | G_FILE_SET_CONTENTS_DURABLE, 0600,
+            &error)) {
+      g_warning("Could not save draft: %s",
+                error != NULL ? error->message : g_strerror(errno));
+      tab->storage_failed = TRUE;
+      return FALSE;
     }
-    g_key_file_set_string(kf, group, "role", role_str);
-    g_key_file_set_string(
-        kf, group, "content",
-        tab->messages[i].content != NULL ? tab->messages[i].content : "");
   }
-
-  data = g_key_file_to_data(kf, NULL, NULL);
-  g_file_set_contents(conf_path, data, -1, NULL);
-
-  txt_path = g_strdup_printf("%s/%s.txt", dir, tab->id);
-  if (tab->output_view != NULL && GTK_IS_TEXT_VIEW(tab->output_view)) {
-    GtkTextBuffer *buf;
-    GtkTextIter start, end;
-    g_autofree char *text = NULL;
-
-    buf = gtk_text_view_get_buffer(GTK_TEXT_VIEW(tab->output_view));
-    gtk_text_buffer_get_bounds(buf, &start, &end);
-    text = gtk_text_buffer_get_text(buf, &start, &end, FALSE);
-    if (text != NULL && text[0] != '\0')
-      g_file_set_contents(txt_path, text, -1, NULL);
-    else
-      unlink(txt_path);
+  if (g_mkdir_with_parents(dir, 0700) != 0 ||
+      !g_file_set_contents_full(path, data, -1,
+                                G_FILE_SET_CONTENTS_CONSISTENT |
+                                    G_FILE_SET_CONTENTS_DURABLE,
+                                0600, &error)) {
+    g_warning("Could not save tab metadata: %s",
+              error != NULL ? error->message : g_strerror(errno));
+    tab->storage_failed = TRUE;
+    return FALSE;
   }
-
-  {
-    g_autofree char *prompt_path = NULL;
-    g_autofree char *prompt_text = NULL;
-
-    prompt_path = g_strdup_printf("%s/%s.prompt", dir, tab->id);
-    if (tab->prompt_view != NULL && GTK_IS_TEXT_VIEW(tab->prompt_view)) {
-      GtkTextBuffer *buf;
-      GtkTextIter start, end;
-
-      buf = gtk_text_view_get_buffer(GTK_TEXT_VIEW(tab->prompt_view));
-      gtk_text_buffer_get_bounds(buf, &start, &end);
-      prompt_text = gtk_text_buffer_get_text(buf, &start, &end, FALSE);
-    }
-    if (prompt_text != NULL && prompt_text[0] != '\0')
-      g_file_set_contents(prompt_path, prompt_text, -1, NULL);
-    else
-      unlink(prompt_path);
-  }
+  tab->storage_failed = thread_store_has_unsaved(tab->store);
+  g_clear_pointer(&tab->draft, g_free);
+  return TRUE;
 }
 
 Tab *tab_load(AppWindow *win, const char *uuid) {
-  g_autofree char *dir = NULL;
-  g_autofree char *conf_path = NULL;
-  g_autofree char *txt_path = NULL;
-  g_autoptr(GKeyFile) kf = NULL;
-  g_autofree char *name = NULL;
-  g_autofree char *agent = NULL;
-  g_autofree char *model = NULL;
-  g_autofree char *text = NULL;
-  Tab *tab;
-  int layout;
-  int version;
-  GtkWidget *page;
-  GtkWidget *label_widget;
-
-  dir = tabs_dir();
-  conf_path = g_strdup_printf("%s/%s.conf", dir, uuid);
-
-  kf = g_key_file_new();
-  if (!g_key_file_load_from_file(kf, conf_path, G_KEY_FILE_NONE, NULL))
+  if (thread_store_is_deleting(uuid))
     return NULL;
-
-  name = g_key_file_get_string(kf, "tab", "name", NULL);
-  if (name == NULL)
-    name = g_strdup("New Tab");
-
-  tab = g_new0(Tab, 1);
-  tab->win = win;
+  g_autoptr(GKeyFile) kf = tab_read_metadata(uuid);
+  if (kf == NULL)
+    return NULL;
+  g_autofree char *name = g_key_file_get_string(kf, "tab", "name", NULL);
+  Tab *tab = tab_allocate(win, name != NULL ? name : "New Tab", FALSE);
+  g_free(tab->id);
   tab->id = g_strdup(uuid);
-  tab->name = g_strdup(name);
-  tab->has_activity = TRUE;
-  tab->is_open = TRUE;
-  tab->state = 0;
-  tab->ref_count = 1;
-
-  {
-    g_autofree char *root = NULL;
-
-    root = tmp_root();
-    tab->tmpdir_path = g_build_filename(root, tab->id, NULL);
-  }
-
-  /* Read per-tab provider name from saved state, fall back to config */
-  {
-    g_autofree char *saved = g_key_file_get_string(kf, "tab", "provider", NULL);
-
-    tab->provider_name =
-        saved != NULL ? g_strdup(saved)
-                      : runtime_config_get_string(win->config, "provider",
-                                                  PROVIDER_DEFAULT);
-  }
-
-  /* Create per-tab provider */
-  {
-    g_autofree char *err_msg = NULL;
-
-    if (win != NULL && win->config != NULL) {
-      tab->provider = provider_manager_create_or_fallback(
-          win->config, tab->provider_name, &err_msg);
-      if (err_msg != NULL) {
-        g_warning(
-            "Provider '%s' for restored tab failed, fell back to opencode: %s",
-            tab->provider_name, err_msg);
-        g_free(tab->provider_name);
-        tab->provider_name = g_strdup("opencode");
-      }
-    }
-
-    if (err_msg != NULL && win != NULL && win->window != NULL &&
-        !provider_error_shown) {
-      provider_error_shown = TRUE;
-      show_error_dialog(GTK_WINDOW(win->window), "Provider Not Available",
-                        err_msg);
-    }
-  }
-
-  layout = g_key_file_get_integer(kf, "tab", "layout", NULL);
-  tab->layout_mode = layout;
-  tab->marked_lines_str = g_strdup(runtime_config_get_string(
-      win->config, "marked_lines", DEFAULT_MARKED_LINES_STR));
-
-  agent = g_key_file_get_string(kf, "tab", "agent", NULL);
-  model = g_key_file_get_string(kf, "tab", "model", NULL);
-
-  page = tab_create_widgets(tab, win);
-  g_ptr_array_add(win->tabs, tab);
-  label_widget = tab_create_label(tab, win->tabs->len - 1, win);
-
-  gtk_notebook_append_page(GTK_NOTEBOOK(win->tab_bar), page, label_widget);
-
-  if (agent != NULL)
-    set_selected_text(tab->agent_dropdown, agent);
-  if (model != NULL)
-    set_selected_text(tab->model_dropdown, model);
-
-  txt_path = g_strdup_printf("%s/%s.txt", dir, uuid);
-  if (g_file_get_contents(txt_path, &text, NULL, NULL) && text != NULL) {
-    GtkTextBuffer *buf;
-
-    buf = gtk_text_view_get_buffer(GTK_TEXT_VIEW(tab->output_view));
-    gtk_text_buffer_set_text(buf, text, -1);
-  }
-
-  version = g_key_file_get_integer(kf, "tab", "version", NULL);
-
-  if (version >= 2) {
-    int count;
-
-    count = g_key_file_get_integer(kf, "messages", "count", NULL);
-    for (int i = 0; i < count; i++) {
-      g_autofree char *group = g_strdup_printf("msg_%d", i);
-      g_autofree char *role_str =
-          g_key_file_get_string(kf, group, "role", NULL);
-      g_autofree char *content =
-          g_key_file_get_string(kf, group, "content", NULL);
-
-      if (content != NULL) {
-        ProviderRole role = PROVIDER_ROLE_USER;
-
-        if (g_strcmp0(role_str, "assistant") == 0)
-          role = PROVIDER_ROLE_ASSISTANT;
-        else if (g_strcmp0(role_str, "system") == 0)
-          role = PROVIDER_ROLE_SYSTEM;
-        tab_history_add(tab, role, content);
-      }
-    }
-  } else {
-    int turn;
-    int i;
-
-    /* Version 1 backward compat: read old [follow_up] + [history_N] */
-    turn = g_key_file_get_integer(kf, "follow_up", "turn", NULL);
-    {
-      g_autofree char *lq = NULL;
-      g_autofree char *lo = NULL;
-
-      lq = g_key_file_get_string(kf, "follow_up", "last_query", NULL);
-      lo = g_key_file_get_string(kf, "follow_up", "last_output", NULL);
-      if (lq != NULL && lq[0] != '\0')
-        tab->last_query = g_strdup(lq);
-      if (lo != NULL && lo[0] != '\0')
-        tab->last_output = g_strdup(lo);
-    }
-
-    for (i = 1; i <= turn; i++) {
-      g_autofree char *group = NULL;
-      g_autofree char *q = NULL;
-      g_autofree char *o = NULL;
-      int idx;
-      char *block;
-
-      idx = turn - i;
-      group = g_strdup_printf("history_%d", idx);
-      q = g_key_file_get_string(kf, group, "query", NULL);
-      o = g_key_file_get_string(kf, group, "output", NULL);
-      if (q != NULL && o != NULL) {
-        tab_history_add(tab, PROVIDER_ROLE_USER, q);
-        tab_history_add(tab, PROVIDER_ROLE_ASSISTANT, o);
-
-        block = g_strdup_printf("Q.%d: %s\nA: %s", idx, q, o);
-        tab->qa_history = g_list_prepend(tab->qa_history, block);
-      }
-    }
-  }
-
+  tab->has_activity = g_key_file_get_boolean(kf, "tab", "has_activity", NULL);
   tab->follow_up = g_key_file_get_boolean(kf, "tab", "follow_up", NULL);
-  tab->follow_up_active = FALSE;
-  tab->defaults_applied = TRUE;
-
-  if (g_file_test(tab->tmpdir_path, G_FILE_TEST_IS_DIR)) {
-    gtk_widget_set_sensitive(tab->follow_up_check, TRUE);
-    if (tab->follow_up)
-      gtk_check_button_set_active(GTK_CHECK_BUTTON(tab->follow_up_check), TRUE);
+  tab->layout_mode = g_key_file_get_integer(kf, "tab", "layout", NULL);
+  int state = g_key_file_get_integer(kf, "tab", "state", NULL);
+  tab->state =
+      state >= STATE_IDLE && state <= STATE_FAILED ? state : STATE_IDLE;
+  gboolean interrupted = tab->state == STATE_LOADING;
+  if (interrupted)
+    tab->state = STATE_FAILED;
+  tab->has_unseen_output = g_key_file_get_boolean(kf, "tab", "unread", NULL);
+  tab->has_unseen_output = tab->has_unseen_output || interrupted;
+  g_autofree char *provider =
+      g_key_file_get_string(kf, "tab", "provider", NULL);
+  if (provider != NULL) {
+    g_free(tab->provider_name);
+    tab->provider_name = g_steal_pointer(&provider);
   }
-
-  {
-    g_autofree char *prompt_path = NULL;
-    g_autofree char *prompt_text = NULL;
-
-    prompt_path = g_strdup_printf("%s/%s.prompt", dir, tab->id);
-    if (g_file_get_contents(prompt_path, &prompt_text, NULL, NULL) &&
-        prompt_text != NULL && prompt_text[0] != '\0') {
-      GtkTextBuffer *buf;
-
-      buf = gtk_text_view_get_buffer(GTK_TEXT_VIEW(tab->prompt_view));
-      gtk_text_buffer_set_text(buf, prompt_text, -1);
-    }
-  }
-
+  g_free(tab->selected_agent);
+  tab->selected_agent = g_key_file_get_string(kf, "tab", "agent", NULL);
+  g_free(tab->selected_model);
+  tab->selected_model = g_key_file_get_string(kf, "tab", "model", NULL);
+  tab->project_dir = g_key_file_get_string(kf, "tab", "project", NULL);
+  g_clear_pointer(&tab->draft, g_free);
+  tab->page = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+  g_ptr_array_add(win->tabs, tab);
+  GtkWidget *label = tab_create_label(tab, win->tabs->len - 1, win);
+  gtk_notebook_append_page(GTK_NOTEBOOK(win->tab_bar), tab->page, label);
   return tab;
 }
 
 void tab_delete_saved(const char *uuid) {
-  g_autofree char *dir = NULL;
-  g_autofree char *conf_path = NULL;
-  g_autofree char *txt_path = NULL;
-  g_autofree char *prompt_path = NULL;
-
-  dir = tabs_dir();
-  conf_path = g_strdup_printf("%s/%s.conf", dir, uuid);
-  txt_path = g_strdup_printf("%s/%s.txt", dir, uuid);
-  prompt_path = g_strdup_printf("%s/%s.prompt", dir, uuid);
-  unlink(conf_path);
-  unlink(txt_path);
-  unlink(prompt_path);
+  g_autoptr(GError) error = NULL;
+  if (!thread_store_delete(uuid, &error) && error != NULL)
+    g_warning("Delete history: %s", error->message);
 }
 
 void tab_auto_rename(Tab *tab) {
-  guint i;
-  int n_pages;
-  GtkNotebook *nb;
 
   if (tab == NULL)
     return;
@@ -559,31 +401,9 @@ void tab_auto_rename(Tab *tab) {
   if (tab->win == NULL)
     return;
 
-  nb = GTK_NOTEBOOK(tab->win->tab_bar);
-  n_pages = gtk_notebook_get_n_pages(nb);
-  for (i = 0; i < (guint)n_pages; i++) {
-    Tab *t;
-    GtkWidget *box, *child;
-
-    t = g_ptr_array_index(tab->win->tabs, i);
-    if (t == tab) {
-      box =
-          gtk_notebook_get_tab_label(nb, gtk_notebook_get_nth_page(nb, (int)i));
-      if (box != NULL) {
-        child = gtk_widget_get_first_child(box);
-        while (child != NULL) {
-          if (GTK_IS_LABEL(child) &&
-              !gtk_widget_has_css_class(child, "tab-status-dot") &&
-              !gtk_widget_has_css_class(child, "tab-close-btn")) {
-            gtk_label_set_text(GTK_LABEL(child), tab->name);
-            gtk_widget_set_tooltip_text(child, tab->name);
-            break;
-          }
-          child = gtk_widget_get_next_sibling(child);
-        }
-      }
-      break;
-    }
+  if (GTK_IS_LABEL(tab->tab_name_label)) {
+    gtk_label_set_text(GTK_LABEL(tab->tab_name_label), tab->name);
+    gtk_widget_set_tooltip_text(tab->tab_name_label, tab->name);
   }
 
   gtk_window_set_title(GTK_WINDOW(tab->win->window), tab->name);
@@ -603,6 +423,8 @@ char *get_selected_text(GtkWidget *dropdown) {
   GObject *item;
   const char *str;
 
+  if (!GTK_IS_DROP_DOWN(dropdown))
+    return g_strdup("None");
   pos = gtk_drop_down_get_selected(GTK_DROP_DOWN(dropdown));
   if (pos == GTK_INVALID_LIST_POSITION)
     return g_strdup("None");
@@ -623,6 +445,8 @@ void set_selected_text(GtkWidget *dropdown, const char *text) {
   GListModel *model;
   guint n;
 
+  if (!GTK_IS_DROP_DOWN(dropdown) || text == NULL)
+    return;
   model = gtk_drop_down_get_model(GTK_DROP_DOWN(dropdown));
   n = g_list_model_get_n_items(model);
   for (i = 0; i < n; i++) {
@@ -637,5 +461,9 @@ void set_selected_text(GtkWidget *dropdown, const char *text) {
       return;
     }
     g_object_unref(item);
+  }
+  if (GTK_IS_STRING_LIST(model)) {
+    gtk_string_list_append(GTK_STRING_LIST(model), text);
+    gtk_drop_down_set_selected(GTK_DROP_DOWN(dropdown), n);
   }
 }

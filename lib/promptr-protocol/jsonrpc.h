@@ -5,6 +5,16 @@
 #include <json-glib/json-glib.h>
 #include <stdio.h>
 
+#define PROMPTR_PROTOCOL_VERSION "2.0"
+#define PROMPTR_MAX_FRAME        (64u * 1024u * 1024u)
+#define PROMPTR_MAX_DELTA        (64u * 1024u)
+
+/* Typed accessors never assert on input received across the IPC boundary. */
+const char *protocol_string(JsonObject *object, const char *member);
+gboolean protocol_boolean(JsonObject *object, const char *member);
+JsonObject *protocol_object(JsonObject *object, const char *member);
+gboolean json_rpc_validate(JsonNode *node, GError **error);
+
 /*
  * jsonrpc.h — JSON-RPC 2.0 reference implementation for provider plugins.
  *

@@ -1,21 +1,11 @@
 #ifndef PROVIDER_H
 #define PROVIDER_H
 
+#include "thread-store.h"
 #include <gio/gio.h>
 #include <glib.h>
 
 typedef struct _RuntimeConfig RuntimeConfig;
-
-typedef enum {
-  PROVIDER_ROLE_USER,
-  PROVIDER_ROLE_ASSISTANT,
-  PROVIDER_ROLE_SYSTEM,
-} ProviderRole;
-
-typedef struct {
-  ProviderRole role;
-  char *content;
-} ProviderMessage;
 
 typedef enum {
   PROVIDER_EVENT_CHUNK,
@@ -28,7 +18,23 @@ typedef struct {
   char *output;
   char *error_msg;
   gint64 elapsed_us;
+  char **models;
+  guint64 output_end;
 } ProviderEvent;
+
+typedef struct {
+  const char *thread_id;
+  const char *request_id;
+  const char *query;
+  const char *model;
+  const char *agent_name;
+  const char *agent_content;
+  const char *project_dir;
+  ThreadStore *store;
+  gboolean follow_up;
+  gboolean connection_test;
+  gboolean discover_models;
+} ProviderRequest;
 
 typedef void (*ProviderCallback)(gpointer source, const ProviderEvent *event,
                                  gpointer user_data);
@@ -36,14 +42,10 @@ typedef void (*ProviderCallback)(gpointer source, const ProviderEvent *event,
 typedef struct _ProviderVTable {
   const char *name;
 
-  gboolean (*init)(void **impl, RuntimeConfig *config, GError **error);
   void (*destroy)(void *impl);
-  void (*cleanup_session)(void *impl, gpointer tab_key);
 
-  gboolean (*submit)(void *impl, gpointer tab_key, const char *query,
-                     const ProviderMessage *history, int n_history,
-                     const char *model, const char *agent,
-                     gboolean is_follow_up, GCancellable *cancellable,
+  gboolean (*submit)(void *impl, gpointer tab_key,
+                     const ProviderRequest *request, GCancellable *cancellable,
                      ProviderCallback callback, gpointer callback_data,
                      GError **error);
 
@@ -51,9 +53,6 @@ typedef struct _ProviderVTable {
   void (*cancel_tab)(void *impl, gpointer tab_key);
   char *(*get_display_string)(void *impl, const char *query, const char *model,
                               const char *agent, gboolean is_follow_up);
-  char **(*get_models)(void *impl);
-  char **(*get_agents)(void *impl);
-  gboolean needs_full_history;
 } ProviderVTable;
 
 typedef struct {

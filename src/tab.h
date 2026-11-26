@@ -12,26 +12,39 @@ typedef enum {
   STATE_LOADING,
   STATE_FINISHED,
   STATE_CANCELED,
+  STATE_FAILED,
 } AppState;
 
 typedef struct {
   char *id;
   char *name;
-  char *page_name;
   gboolean has_activity;
   gboolean is_open;
   AppWindow *win;
+  GtkWidget *page;
+  ThreadStore *store;
+  gboolean hydrated;
+  gboolean loading_history;
+  gboolean restoring_draft;
+  gboolean refresh_again;
+  gboolean close_requested;
+  gboolean storage_failed;
+  guint view_generation;
+  char *selected_agent;
+  char *selected_model;
+  char *project_dir;
+  char *draft;
+  char *request_id;
+  char *request_profile;
+  gboolean history_more;
+  gint64 history_cursor;
+  guint64 history_before;
+  guint64 rendered_bytes;
 
-  char *tmpdir_path;
-
-  /* Per-tab provider */
+  /* Present only while a request is pending. */
   Provider *provider;
-  char *provider_name; /* "opencode", "openrouter" — persisted in .conf */
-
-  /* Canonical conversation history (provider-agnostic) */
-  ProviderMessage *messages;
-  int n_messages;
-  int messages_cap;
+  char *provider_name; /* Stable provider profile ID, or unresolved legacy name.
+                        */
 
   GtkWidget *prompt_view;
   GtkWidget *placeholder_label;
@@ -68,18 +81,12 @@ typedef struct {
   GtkWidget *marked_row;
   GtkWidget *action_row;
 
-  GList *qa_history;
-  char *last_query;
-  char *last_output;
-  int follow_up_turn;
   gboolean follow_up;
   gboolean follow_up_active;
   gboolean defaults_applied;
 
-  GSubprocess *subprocess;
   GCancellable *cancellable;
   char *cmd_string;
-  gint64 start_time;
   AppState state;
 
   char *marked_lines_str;
@@ -98,16 +105,13 @@ Tab *tab_new(AppWindow *win, const char *name);
 Tab *tab_ref(Tab *tab);
 void tab_unref(Tab *tab);
 Tab *tab_load(AppWindow *win, const char *uuid);
-void tab_save(Tab *tab);
+gboolean tab_save(Tab *tab);
+GKeyFile *tab_read_metadata(const char *uuid);
+void tab_capture_input(Tab *tab);
+void tab_release_view(Tab *tab);
 void tab_delete_saved(const char *uuid);
-void remove_dir(const char *path);
 
 void tab_auto_rename(Tab *tab);
-
-/* Conversation history helpers */
-void tab_history_add(Tab *tab, ProviderRole role, const char *content);
-void tab_history_clear(Tab *tab);
-char *tab_history_render_display(Tab *tab, const char *current_output);
 
 GtkWidget *tab_create_widgets(Tab *tab, AppWindow *win);
 GtkWidget *tab_create_label(Tab *tab, int idx, AppWindow *win);

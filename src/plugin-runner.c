@@ -1,648 +1,701 @@
+#define _POSIX_C_SOURCE 200809L
 #include "plugin-runner.h"
 #include "../lib/promptr-protocol/jsonrpc.h"
-#include "configfile.h"
-#include "provider.h"
+#include "agent-context.h"
 #include <errno.h>
-#include <glib.h>
+#include <fcntl.h>
+#include <poll.h>
 #include <signal.h>
 #include <string.h>
-#include <sys/types.h>
+#include <sys/wait.h>
 #include <unistd.h>
+#ifdef __linux__
+#include <sys/prctl.h>
+#endif
 
-/* ── Private state ─────────────────────────────────────────────── */
+#ifndef PROMPTR_STARTUP_SECONDS
+#define PROMPTR_STARTUP_SECONDS 10
+#endif
+#ifndef PROMPTR_CANCEL_SECONDS
+#define PROMPTR_CANCEL_SECONDS 5
+#endif
+#ifndef PROMPTR_TEST_SECONDS
+#define PROMPTR_TEST_SECONDS 60
+#endif
+#ifndef PROMPTR_SHUTDOWN_SECONDS
+#define PROMPTR_SHUTDOWN_SECONDS 5
+#endif
+#define EVENT_QUEUE_BYTES (1024u * 1024u)
 
 typedef struct {
-  char *command;
-  char *tab_key; /* current active tab key string */
-  gboolean has_session;
-
-  /* subprocess handles */
-  GPid child_pid;
-  int stdin_fd;
-  int stdout_fd;
-  guint stdout_watch;
-  GString *read_buf;
-
-  /* callback state */
+  gint refs;
+  ProviderProfile *profile;
+  GCancellable *cancel;
+  gboolean busy;
+  GMutex mutex;
+  GCond drained;
+  gsize queued;
+  gpointer source;
   ProviderCallback callback;
   gpointer callback_data;
-  gpointer active_tab;
-  gint64 submit_start;
-  gboolean submitting;
+} Runner;
 
-  /* JSON-RPC */
-  int next_id;
-} PluginRunner;
+typedef struct {
+  Runner *runner;
+  ProviderRequest request;
+  char *thread_id, *request_id, *query, *model, *agent_name, *agent_content,
+      *project_dir;
+} Job;
 
-/* ── Forward declarations ──────────────────────────────────────── */
+typedef struct {
+  Runner *runner;
+  ProviderEvent event;
+  gsize bytes;
+} Delivery;
 
-static gboolean runner_init(void **impl, RuntimeConfig *config, GError **error);
-static void runner_destroy(void *impl);
-static void runner_cleanup_session(void *impl, gpointer tab_key);
-static gboolean runner_submit(void *impl, gpointer tab_key, const char *query,
-                              const ProviderMessage *history, int n_history,
-                              const char *model, const char *agent,
-                              gboolean is_follow_up, GCancellable *cancellable,
-                              ProviderCallback callback, gpointer callback_data,
-                              GError **error);
-static void runner_cancel(void *impl);
-static void runner_cancel_tab(void *impl, gpointer tab_key);
-static char *runner_get_display_string(void *impl, const char *query,
-                                       const char *model, const char *agent,
-                                       gboolean is_follow_up);
-static char **runner_get_models(void *impl);
-static char **runner_get_agents(void *impl);
+typedef struct {
+  Runner *runner;
+  GPid pid;
+  int input, output;
+  GString *buffer;
+  gint64 deadline;
+  gboolean cancelling;
+  const ProviderRequest *request;
+} Transport;
 
-/* ── VTable ────────────────────────────────────────────────────── */
-
-static ProviderVTable plugin_runner_vtable = {
-    .name = "plugin",
-    .init = runner_init,
-    .destroy = runner_destroy,
-    .cleanup_session = runner_cleanup_session,
-    .submit = runner_submit,
-    .cancel = runner_cancel,
-    .cancel_tab = runner_cancel_tab,
-    .get_display_string = runner_get_display_string,
-    .get_models = runner_get_models,
-    .get_agents = runner_get_agents,
-    .needs_full_history = TRUE,
-};
-
-/* ── Internal helpers ──────────────────────────────────────────── */
-
-static void plugin_runner_free(PluginRunner *pr) {
-  if (pr == NULL)
+static Runner *runner_ref(Runner *r) {
+  g_atomic_int_inc(&r->refs);
+  return r;
+}
+static void runner_unref(Runner *r) {
+  if (!g_atomic_int_dec_and_test(&r->refs))
     return;
-
-  g_free(pr->command);
-  g_free(pr->tab_key);
-  if (pr->read_buf != NULL)
-    g_string_free(pr->read_buf, TRUE);
-  g_free(pr);
+  provider_profile_free(r->profile);
+  g_clear_object(&r->cancel);
+  g_mutex_clear(&r->mutex);
+  g_cond_clear(&r->drained);
+  g_free(r);
 }
 
-static gboolean stdin_write(PluginRunner *pr, const char *data) {
-  const char *p = data;
-  size_t remaining = strlen(data);
-  ssize_t written;
+static gboolean deliver(gpointer data) {
+  Delivery *d = data;
+  Runner *r = d->runner;
+  if (d->event.type != PROVIDER_EVENT_CHUNK)
+    r->busy = FALSE;
+  if (r->callback != NULL)
+    r->callback(r->source, &d->event, r->callback_data);
+  g_mutex_lock(&r->mutex);
+  r->queued -= d->bytes;
+  g_cond_broadcast(&r->drained);
+  g_mutex_unlock(&r->mutex);
+  g_free(d->event.output);
+  g_free(d->event.error_msg);
+  g_strfreev(d->event.models);
+  runner_unref(r);
+  g_free(d);
+  return G_SOURCE_REMOVE;
+}
 
-  while (remaining > 0) {
-    written = write(pr->stdin_fd, p, remaining);
-    if (written < 0) {
-      if (errno == EINTR)
-        continue;
-      return FALSE;
-    }
-    p += written;
-    remaining -= (size_t)written;
+static void post_event(Runner *r, ProviderEventType type, const char *text,
+                       const char *error, gint64 elapsed, char **models,
+                       guint64 output_end) {
+  if (type == PROVIDER_EVENT_CHUNK && g_cancellable_is_cancelled(r->cancel))
+    return;
+  gsize bytes = (text != NULL ? strlen(text) : 0) + 1;
+  g_mutex_lock(&r->mutex);
+  while (r->queued + bytes > EVENT_QUEUE_BYTES &&
+         !g_cancellable_is_cancelled(r->cancel))
+    g_cond_wait_until(&r->drained, &r->mutex,
+                      g_get_monotonic_time() + G_TIME_SPAN_SECOND);
+  if (type == PROVIDER_EVENT_CHUNK && g_cancellable_is_cancelled(r->cancel)) {
+    g_mutex_unlock(&r->mutex);
+    return;
   }
-
-  return TRUE;
+  r->queued += bytes;
+  g_mutex_unlock(&r->mutex);
+  Delivery *d = g_new0(Delivery, 1);
+  d->runner = runner_ref(r);
+  d->bytes = bytes;
+  d->event.type = type;
+  d->event.output = g_strdup(text);
+  if (error != NULL) {
+    gsize length = MIN(strlen(error), (gsize)4096);
+    while (length > 0 && !g_utf8_validate(error, length, NULL))
+      length--;
+    d->event.error_msg = g_strndup(error, length);
+  }
+  d->event.elapsed_us = elapsed;
+  d->event.models = g_strdupv(models);
+  d->event.output_end = output_end;
+  GSource *source = g_idle_source_new();
+  g_source_set_callback(source, deliver, d, NULL);
+  g_source_attach(source, g_main_context_default());
+  g_source_unref(source);
 }
 
-/* Write a message + newline to the plugin's stdin. */
-static gboolean protocol_write(PluginRunner *pr, JsonNode *msg) {
-  g_autoptr(JsonGenerator) gen = NULL;
-  g_autofree char *json = NULL;
-  gsize len;
-  gboolean ok;
-
-  gen = json_generator_new();
-  json_generator_set_root(gen, msg);
-  json_generator_set_pretty(gen, FALSE);
-  json = json_generator_to_data(gen, &len);
-
-  ok = stdin_write(pr, json);
-  if (ok)
-    ok = stdin_write(pr, "\n");
-
-  return ok;
+static gboolean transport_error(GError **error, const char *message) {
+  g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_FAILED, message);
+  return FALSE;
 }
 
-/* Blocking read of one JSON-RPC response line from stdout. */
-static JsonNode *read_response(PluginRunner *pr, GError **error) {
-  g_autofree char *line = NULL;
-  gsize len;
-  g_autoptr(JsonParser) parser = NULL;
-  GIOChannel *channel;
-  GIOStatus status;
-
-  channel = g_io_channel_unix_new(pr->stdout_fd);
-  g_io_channel_set_encoding(channel, NULL, NULL);
-
-  while (TRUE) {
-    g_free(line);
-    line = NULL;
-    len = 0;
-
-    status = g_io_channel_read_line(channel, &line, &len, NULL, error);
-
-    if (status != G_IO_STATUS_NORMAL) {
-      if (status == G_IO_STATUS_EOF)
-        g_set_error(error, G_IO_ERROR, G_IO_ERROR_FAILED,
-                    "plugin closed stdout unexpectedly");
-      g_io_channel_unref(channel);
-      return NULL;
-    }
-
-    /* Strip trailing newline */
-    while (len > 0 && (line[len - 1] == '\n' || line[len - 1] == '\r'))
-      line[--len] = '\0';
-
-    if (line[0] == '\0')
+/* Writes happen only in this worker. Nonblocking descriptors prevent a stalled
+ * plugin from trapping cancellation or shutdown inside a pipe write. */
+static gboolean write_frame(Transport *t, const char *json, GError **error) {
+  gsize size = strlen(json);
+  if (size > PROMPTR_MAX_FRAME)
+    return transport_error(error, "Request exceeds the 64 MiB IPC frame limit");
+  gsize offset = 0;
+  while (offset < size + 1) {
+    if (t->deadline > 0 && g_get_monotonic_time() >= t->deadline)
+      return transport_error(
+          error, "Provider timed out; check its configuration and test again");
+    if (g_cancellable_is_cancelled(t->runner->cancel))
+      return transport_error(error,
+                             "Request cancelled while writing to provider");
+    struct pollfd fd = {t->input, POLLOUT, 0};
+    int ready = poll(&fd, 1, 50);
+    if (ready < 0 && errno == EINTR)
       continue;
+    if (ready < 0 || (fd.revents & (POLLERR | POLLHUP | POLLNVAL)))
+      return transport_error(error, "Provider closed its input");
+    if (ready == 0)
+      continue;
+    const char *part = offset < size ? json + offset : "\n";
+    gsize count = offset < size ? MIN((gsize)65536, size - offset) : 1;
+    ssize_t n = write(t->input, part, count);
+    if (n < 0 && (errno == EINTR || errno == EAGAIN))
+      continue;
+    if (n <= 0)
+      return transport_error(error, "Could not write to provider");
+    offset += n;
+  }
+  return TRUE;
+}
 
-    parser = json_parser_new();
-    if (!json_parser_load_from_data(parser, line, -1, error)) {
-      g_io_channel_unref(channel);
+static gboolean write_message(Transport *t, JsonNode *node, GError **error) {
+  g_autofree char *json = json_to_string(node, FALSE);
+  return write_frame(t, json, error);
+}
+
+static gboolean send_cancel(Transport *t) {
+  g_autoptr(JsonObject) o = json_object_new();
+  json_object_set_string_member(o, "thread_id", t->request->thread_id);
+  json_object_set_string_member(o, "request_id", t->request->request_id);
+  g_autoptr(JsonNode) p = json_node_new(JSON_NODE_OBJECT);
+  json_node_set_object(p, o);
+  g_autoptr(JsonNode) node =
+      json_rpc_make_request("provider/cancel", g_steal_pointer(&p), 3);
+  g_autofree char *json = json_to_string(node, FALSE);
+  g_autofree char *line = g_strconcat(json, "\n", NULL);
+  /* Small cancellation frame fits atomically into an available pipe; otherwise
+   * the deadline below still terminates the isolated worker process group. */
+  ssize_t n = write(t->input, line, strlen(line));
+  return n == (ssize_t)strlen(line);
+}
+
+static JsonNode *read_message(Transport *t, gboolean submission,
+                              GError **error) {
+  for (;;) {
+    if (g_cancellable_is_cancelled(t->runner->cancel) && !t->cancelling) {
+      if (!submission) {
+        transport_error(error, "Provider startup cancelled");
+        return NULL;
+      }
+      t->cancelling = TRUE;
+      t->deadline =
+          g_get_monotonic_time() + PROMPTR_CANCEL_SECONDS * G_TIME_SPAN_SECOND;
+      send_cancel(t);
+    }
+    if (t->deadline > 0 && g_get_monotonic_time() >= t->deadline) {
+      transport_error(error, t->cancelling
+                                 ? "Provider did not finish cancellation"
+                                 : "Provider timed out");
       return NULL;
     }
-
-    g_io_channel_unref(channel);
-    return json_node_copy(json_parser_get_root(parser));
+    char *newline = memchr(t->buffer->str, '\n', t->buffer->len);
+    if (newline != NULL) {
+      gsize len = newline - t->buffer->str;
+      g_autoptr(JsonParser) parser = json_parser_new();
+      if (!json_parser_load_from_data(parser, t->buffer->str, len, error))
+        return NULL;
+      JsonNode *root = json_parser_get_root(parser);
+      if (!json_rpc_validate(root, error))
+        return NULL;
+      JsonNode *copy = json_node_copy(root);
+      g_string_erase(t->buffer, 0, len + 1);
+      return copy;
+    }
+    if (g_cancellable_is_cancelled(t->runner->cancel) && !t->cancelling) {
+      if (!submission) {
+        transport_error(error, "Provider startup cancelled");
+        return NULL;
+      }
+      t->cancelling = TRUE;
+      t->deadline =
+          g_get_monotonic_time() + PROMPTR_CANCEL_SECONDS * G_TIME_SPAN_SECOND;
+      send_cancel(t);
+    }
+    if (t->deadline > 0 && g_get_monotonic_time() >= t->deadline) {
+      transport_error(error, t->cancelling
+                                 ? "Provider did not finish cancellation"
+                                 : "Provider timed out");
+      return NULL;
+    }
+    struct pollfd fd = {t->output, POLLIN, 0};
+    int ready = poll(&fd, 1, 50);
+    if (ready < 0 && errno == EINTR)
+      continue;
+    if (ready < 0 || (fd.revents & (POLLERR | POLLNVAL))) {
+      transport_error(error, "Provider pipe failed");
+      return NULL;
+    }
+    if (ready == 0)
+      continue;
+    char buf[16384];
+    ssize_t n = read(t->output, buf, sizeof(buf));
+    if (n < 0 && (errno == EINTR || errno == EAGAIN))
+      continue;
+    if (n <= 0) {
+      transport_error(error, "Provider exited before completing the request");
+      return NULL;
+    }
+    if (memchr(buf, 0, n) != NULL || t->buffer->len + n > PROMPTR_MAX_FRAME) {
+      transport_error(error, "Provider sent an invalid or oversized IPC frame");
+      return NULL;
+    }
+    g_string_append_len(t->buffer, buf, n);
   }
 }
 
-/* ── Initialize handshake ───────────────────────────────────────── */
-
-static gboolean do_initialize(PluginRunner *pr, RuntimeConfig *config,
-                              GError **error) {
-  (void)config;
-  g_autoptr(JsonNode) req = NULL;
-  g_autoptr(JsonNode) resp = NULL;
-  g_autoptr(JsonBuilder) params = NULL;
-  g_autoptr(JsonBuilder) caps = NULL;
-  g_autofree char *provider_name = NULL;
-
-  params = json_builder_new();
-  json_builder_begin_object(params);
-  json_builder_set_member_name(params, "protocol_version");
-  json_builder_add_string_value(params, "1.0");
-  json_builder_set_member_name(params, "client_capabilities");
-  json_builder_begin_object(params);
-  json_builder_set_member_name(params, "tool_execution");
-  json_builder_add_boolean_value(params, TRUE);
-  json_builder_set_member_name(params, "agent_content");
-  json_builder_add_boolean_value(params, TRUE);
-  json_builder_set_member_name(params, "agent_resolution");
-  json_builder_add_boolean_value(params, TRUE);
-  json_builder_set_member_name(params, "streaming");
-  json_builder_add_boolean_value(params, TRUE);
-  json_builder_end_object(params);
-  json_builder_end_object(params);
-
-  {
-    JsonNode *params_node = json_builder_get_root(params);
-    req = json_rpc_make_request("provider/initialize", params_node,
-                                pr->next_id++);
-  }
-
-  if (!protocol_write(pr, req)) {
-    g_set_error(error, G_IO_ERROR, G_IO_ERROR_FAILED,
-                "Failed to write initialize request");
-    return FALSE;
-  }
-
-  resp = read_response(pr, error);
-  if (resp == NULL)
-    return FALSE;
-
-  if (json_rpc_is_error(resp)) {
-    g_set_error(error, G_IO_ERROR, G_IO_ERROR_FAILED,
-                "Plugin initialize error: %s",
-                json_rpc_get_error_message(resp));
-    return FALSE;
-  }
-
-  return TRUE;
+static void child_setup(gpointer data) {
+  (void)data;
+  setsid();
+#ifdef __linux__
+  prctl(PR_SET_PDEATHSIG, SIGTERM);
+  if (getppid() == 1)
+    _exit(1);
+#endif
 }
 
-/* ── Spawn ──────────────────────────────────────────────────────── */
-
-static gboolean spawn_plugin(PluginRunner *pr, GError **error) {
-  const char *argv[2] = {pr->command, NULL};
-  g_autoptr(GError) spawn_err = NULL;
-
-  if (!g_spawn_async_with_pipes(NULL, (char **)argv, NULL,
-                                G_SPAWN_SEARCH_PATH | G_SPAWN_DO_NOT_REAP_CHILD,
-                                NULL, NULL, &pr->child_pid, &pr->stdin_fd,
-                                &pr->stdout_fd, NULL, &spawn_err)) {
-    g_set_error(error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND,
-                "Failed to spawn plugin '%s': %s", pr->command,
-                spawn_err->message);
-    return FALSE;
-  }
-
-  return TRUE;
-}
-
-/* ── Async stdout reader ────────────────────────────────────────── */
-
-static void dispatch_event(PluginRunner *pr, const char *tab_id,
-                           const char *type, JsonNode *params) {
-  (void)tab_id;
-  ProviderEvent ev;
-  gint64 elapsed = g_get_monotonic_time() - pr->submit_start;
-
-  memset(&ev, 0, sizeof(ev));
-
-  if (g_strcmp0(type, "chunk") == 0) {
-    const char *output = NULL;
-
-    if (json_object_has_member(json_node_get_object(params), "output"))
-      output =
-          json_object_get_string_member(json_node_get_object(params), "output");
-    ev.type = PROVIDER_EVENT_CHUNK;
-    ev.output = (char *)(output != NULL ? output : "");
-    ev.elapsed_us = elapsed;
-    pr->callback(pr->active_tab, &ev, pr->callback_data);
-    return;
-  }
-
-  if (g_strcmp0(type, "done") == 0) {
-    const char *output = NULL;
-
-    if (json_object_has_member(json_node_get_object(params), "output"))
-      output =
-          json_object_get_string_member(json_node_get_object(params), "output");
-    ev.type = PROVIDER_EVENT_DONE;
-    ev.output = (char *)(output != NULL ? output : "");
-    ev.elapsed_us = elapsed;
-    pr->callback(pr->active_tab, &ev, pr->callback_data);
-    pr->submitting = FALSE;
-    return;
-  }
-
-  if (g_strcmp0(type, "error") == 0) {
-    const char *err_msg = NULL;
-
-    if (json_object_has_member(json_node_get_object(params), "error_msg"))
-      err_msg = json_object_get_string_member(json_node_get_object(params),
-                                              "error_msg");
-    ev.type = PROVIDER_EVENT_ERROR;
-    ev.error_msg = (char *)(err_msg != NULL ? err_msg : "");
-    ev.elapsed_us = elapsed;
-    pr->callback(pr->active_tab, &ev, pr->callback_data);
-    pr->submitting = FALSE;
-    return;
-  }
-}
-
-static void process_lines(PluginRunner *pr) {
-  char *data = pr->read_buf->str;
-
-  while (TRUE) {
-    char *newline = strchr(data, '\n');
-
-    if (newline == NULL)
-      break;
-
-    *newline = '\0';
-
-    if (data[0] != '\0' && pr->callback != NULL) {
-      g_autoptr(JsonParser) parser = NULL;
-      g_autoptr(GError) err = NULL;
-      JsonNode *root;
-      JsonObject *obj;
-      const char *method;
-      JsonNode *params;
-
-      parser = json_parser_new();
-      if (json_parser_load_from_data(parser, data, -1, &err)) {
-        root = json_parser_get_root(parser);
-        if (root != NULL && !JSON_NODE_HOLDS_VALUE(root)) {
-          obj = json_node_get_object(root);
-          method = json_rpc_get_method(root);
-          params = json_rpc_get_params(root);
-
-          /* Only handle event notifications during submit */
-          if (method != NULL && g_strcmp0(method, "provider/event") == 0 &&
-              params != NULL) {
-            const char *tab_id = NULL;
-            const char *type = NULL;
-
-            if (json_object_has_member(obj, "tab_id"))
-              tab_id = json_object_get_string_member(obj, "tab_id");
-            if (json_object_has_member(obj, "type"))
-              type = json_object_get_string_member(obj, "type");
-
-            if (tab_id == NULL &&
-                json_object_has_member(json_node_get_object(params), "tab_id"))
-              tab_id = json_object_get_string_member(
-                  json_node_get_object(params), "tab_id");
-            if (type == NULL &&
-                json_object_has_member(json_node_get_object(params), "type"))
-              type = json_object_get_string_member(json_node_get_object(params),
-                                                   "type");
-
-            if (tab_id != NULL && type != NULL)
-              dispatch_event(pr, tab_id, type, params);
-          }
+static void transport_close(Transport *t) {
+  if (t->input >= 0)
+    close(t->input);
+  if (t->output >= 0)
+    close(t->output);
+  if (t->pid > 0) {
+    int status;
+    gint64 end =
+        g_get_monotonic_time() + PROMPTR_SHUTDOWN_SECONDS * G_TIME_SPAN_SECOND;
+    for (;;) {
+      pid_t result = waitpid(t->pid, &status, WNOHANG);
+      if (result == t->pid || (result < 0 && errno == ECHILD))
+        break;
+      if (g_get_monotonic_time() >= end) {
+        kill(-t->pid, SIGKILL);
+        while (waitpid(t->pid, &status, 0) < 0 && errno == EINTR) {
         }
+        break;
+      }
+      poll(NULL, 0, 20);
+    }
+    /* Reap provider descendants as well if a broken plugin abandoned them. */
+    kill(-t->pid, SIGTERM);
+    g_spawn_close_pid(t->pid);
+  }
+  g_string_free(t->buffer, TRUE);
+}
+
+static void job_free(Job *j) {
+  thread_store_unref(j->request.store);
+  g_free(j->thread_id);
+  g_free(j->request_id);
+  g_free(j->query);
+  g_free(j->model);
+  g_free(j->agent_name);
+  g_free(j->agent_content);
+  g_free(j->project_dir);
+  runner_unref(j->runner);
+  g_free(j);
+}
+
+static void redact_error(JsonObject *settings, GError **error) {
+  if (settings == NULL || error == NULL || *error == NULL)
+    return;
+  g_autoptr(GList) fields = json_object_get_members(settings);
+  for (GList *it = fields; it != NULL; it = it->next) {
+    const char *value = protocol_string(settings, it->data);
+    if (value == NULL || !*value || strstr((*error)->message, value) == NULL)
+      continue;
+    g_auto(GStrv) parts = g_strsplit((*error)->message, value, -1);
+    g_autofree char *safe = g_strjoinv("[redacted]", parts);
+    g_free((*error)->message);
+    (*error)->message = g_steal_pointer(&safe);
+  }
+}
+
+static void run_job(Job *j) {
+  Runner *r = j->runner;
+  ProviderRequest *q = &j->request;
+  g_autoptr(GError) error = NULL;
+  g_autofree char *resolved_context =
+      q->agent_content == NULL ? agent_context_resolve(q->agent_name, &error)
+                               : NULL;
+  if (resolved_context != NULL)
+    q->agent_content = resolved_context;
+  g_autoptr(JsonObject) settings =
+      error == NULL ? provider_profile_resolve(r->profile, r->cancel, &error)
+                    : NULL;
+  Transport t = {.runner = r,
+                 .input = -1,
+                 .output = -1,
+                 .buffer = g_string_new(NULL),
+                 .request = q};
+  gboolean began = FALSE, completed = FALSE, cancelled = FALSE,
+           received = FALSE;
+  guint64 output_end = 0;
+  g_auto(GStrv) models = NULL;
+  g_autoptr(GPtrArray) argv = NULL;
+  gint64 start = g_get_monotonic_time();
+  if (settings == NULL)
+    goto finished;
+  argv = g_ptr_array_new();
+  g_ptr_array_add(argv, r->profile->command);
+  for (guint i = 0;
+       r->profile->arguments != NULL && r->profile->arguments[i] != NULL; i++)
+    g_ptr_array_add(argv, r->profile->arguments[i]);
+  g_ptr_array_add(argv, NULL);
+  if (!g_spawn_async_with_pipes(
+          NULL, (char **)argv->pdata, NULL,
+          G_SPAWN_SEARCH_PATH | G_SPAWN_DO_NOT_REAP_CHILD |
+              G_SPAWN_STDERR_TO_DEV_NULL,
+          child_setup, NULL, &t.pid, &t.input, &t.output, NULL, &error))
+    goto finished;
+  fcntl(t.input, F_SETFL, fcntl(t.input, F_GETFL) | O_NONBLOCK);
+  fcntl(t.output, F_SETFL, fcntl(t.output, F_GETFL) | O_NONBLOCK);
+  t.deadline =
+      g_get_monotonic_time() + PROMPTR_STARTUP_SECONDS * G_TIME_SPAN_SECOND;
+  {
+    g_autoptr(JsonObject) init = json_object_new();
+    json_object_set_string_member(init, "protocol_version",
+                                  PROMPTR_PROTOCOL_VERSION);
+    json_object_set_string_member(init, "purpose",
+                                  q->discover_models ? "models" : "submit");
+    json_object_set_object_member(init, "config", json_object_ref(settings));
+    g_autoptr(JsonNode) params = json_node_new(JSON_NODE_OBJECT);
+    json_node_set_object(params, init);
+    g_autoptr(JsonNode) request = json_rpc_make_request(
+        "provider/initialize", g_steal_pointer(&params), 1);
+    if (!write_message(&t, request, &error))
+      goto finished;
+    g_autoptr(JsonNode) response = read_message(&t, FALSE, &error);
+    if (response == NULL)
+      goto finished;
+    if (json_rpc_is_error(response)) {
+      transport_error(&error, json_rpc_get_error_message(response));
+      goto finished;
+    }
+    JsonNode *result = json_rpc_get_result(response);
+    if (json_rpc_get_id(response) != 1 || result == NULL ||
+        !JSON_NODE_HOLDS_OBJECT(result) ||
+        g_strcmp0(
+            protocol_string(json_node_get_object(result), "protocol_version"),
+            PROMPTR_PROTOCOL_VERSION) != 0) {
+      transport_error(&error, "Provider does not support protocol 2.0; install "
+                              "a compatible plugin");
+      goto finished;
+    }
+  }
+  {
+    g_autoptr(JsonObject) params = json_object_new();
+    json_object_set_string_member(params, "thread_id", q->thread_id);
+    json_object_set_string_member(params, "request_id", q->request_id);
+    const char *model =
+        q->model != NULL && *q->model && g_strcmp0(q->model, "None") != 0
+            ? q->model
+            : r->profile->model;
+    if (model != NULL && *model)
+      json_object_set_string_member(params, "model", model);
+    if (!q->discover_models) {
+      g_autoptr(JsonArray) messages =
+          q->store != NULL && q->follow_up
+              ? thread_store_messages(q->store, &error)
+              : json_array_new();
+      if (messages == NULL)
+        goto finished;
+      JsonObject *user = json_object_new();
+      json_object_set_string_member(user, "role", "user");
+      json_object_set_string_member(user, "content", q->query);
+      json_array_add_object_element(messages, user);
+      json_object_set_array_member(params, "messages",
+                                   json_array_ref(messages));
+      if (q->agent_content != NULL) {
+        JsonObject *agent = json_object_new();
+        json_object_set_string_member(
+            agent, "name", q->agent_name != NULL ? q->agent_name : "");
+        json_object_set_string_member(agent, "content", q->agent_content);
+        json_object_set_object_member(params, "agent", agent);
+      }
+      if (q->project_dir != NULL && *q->project_dir)
+        json_object_set_string_member(params, "project_dir", q->project_dir);
+      json_object_set_boolean_member(params, "connection_test",
+                                     q->connection_test);
+      if (q->store != NULL && q->follow_up) {
+        g_autofree char *state =
+            thread_store_get_resume(q->store, r->profile->id);
+        if (state != NULL)
+          json_object_set_string_member(params, "resume_state", state);
       }
     }
-
-    data = newline + 1;
-  }
-
-  /* Keep remaining partial data */
-  if (data > pr->read_buf->str) {
-    GString *remaining = g_string_new(data);
-
-    g_string_free(pr->read_buf, TRUE);
-    pr->read_buf = remaining;
-  }
-}
-
-static gboolean on_stdout_ready(GIOChannel *source, GIOCondition cond,
-                                gpointer user_data) {
-  PluginRunner *pr = user_data;
-  char buf[4096];
-  gsize bytes_read;
-  g_autoptr(GError) error = NULL;
-
-  if (cond & (G_IO_HUP | G_IO_ERR | G_IO_NVAL)) {
-    g_warning("plugin-runner: stdout closed or error (cond=0x%x)",
-              (unsigned)cond);
-    if (pr->submitting && pr->callback != NULL) {
-      ProviderEvent ev = {PROVIDER_EVENT_ERROR, NULL, (char *)"", 0};
-
-      pr->callback(pr->active_tab, &ev, pr->callback_data);
-      pr->submitting = FALSE;
+    g_autoptr(JsonNode) p = json_node_new(JSON_NODE_OBJECT);
+    json_node_set_object(p, params);
+    g_autoptr(JsonNode) request = json_rpc_make_request(
+        q->discover_models ? "provider/models" : "provider/submit",
+        g_steal_pointer(&p), 2);
+    t.deadline =
+        g_get_monotonic_time() + (q->connection_test || q->discover_models
+                                      ? PROMPTR_TEST_SECONDS
+                                      : PROMPTR_STARTUP_SECONDS) *
+                                     G_TIME_SPAN_SECOND;
+    g_autofree char *encoded = json_to_string(request, FALSE);
+    if (strlen(encoded) > PROMPTR_MAX_FRAME) {
+      transport_error(&error, "Request exceeds the 64 MiB IPC frame limit; "
+                              "start a fresh conversation");
+      goto finished;
     }
-    return G_SOURCE_REMOVE;
+    if (q->store != NULL && !q->discover_models) {
+      if (!thread_store_begin(q->store, q->request_id, q->query, !q->follow_up,
+                              &error))
+        goto finished;
+      began = TRUE;
+    }
+    if (!write_frame(&t, encoded, &error))
+      goto finished;
+    if (!q->connection_test && !q->discover_models)
+      t.deadline = 0;
   }
-
-  if (!g_io_channel_read_chars(source, buf, sizeof(buf) - 1, &bytes_read,
-                               &error)) {
-    g_warning("plugin-runner: read error: %s", error->message);
-    return G_SOURCE_CONTINUE;
+  /* The provider now owns its input snapshot. Keep only routing, persistence
+   * and cancellation state while awaiting output, including for background
+   * tabs. */
+  g_clear_pointer(&j->query, g_free);
+  q->query = NULL;
+  g_clear_pointer(&j->agent_content, g_free);
+  q->agent_content = NULL;
+  g_clear_pointer(&resolved_context, g_free);
+  while (!completed) {
+    g_autoptr(JsonNode) response = read_message(&t, TRUE, &error);
+    if (response == NULL)
+      break;
+    JsonObject *o = json_node_get_object(response);
+    if (g_strcmp0(protocol_string(o, "method"), "provider/event") == 0) {
+      JsonObject *p = protocol_object(o, "params");
+      if (g_strcmp0(protocol_string(p, "thread_id"), q->thread_id) != 0 ||
+          g_strcmp0(protocol_string(p, "request_id"), q->request_id) != 0)
+        continue;
+      const char *type = protocol_string(p, "type");
+      if (g_strcmp0(type, "progress") == 0)
+        continue;
+      const char *text = protocol_string(p, "output");
+      if (g_strcmp0(type, "delta") != 0 || text == NULL ||
+          strlen(text) > PROMPTR_MAX_DELTA) {
+        transport_error(
+            &error, "Provider sent an unsupported event or invalid text delta");
+        break;
+      }
+      output_end += strlen(text);
+      if (began && !thread_store_chunk(q->store, text, &error)) {
+        if (!q->connection_test && *text)
+          post_event(r, PROVIDER_EVENT_CHUNK, text, NULL, 0, NULL, output_end);
+        break;
+      }
+      if (*text)
+        received = TRUE;
+      if (!q->connection_test && *text)
+        post_event(r, PROVIDER_EVENT_CHUNK, text, NULL, 0, NULL, output_end);
+      continue;
+    }
+    if (json_rpc_get_id(response) == 3 && t.cancelling &&
+        json_rpc_is_response(response))
+      continue;
+    if (json_rpc_get_id(response) != 2) {
+      transport_error(&error, "Unexpected provider response ID");
+      break;
+    }
+    if (json_rpc_is_error(response)) {
+      transport_error(&error, json_rpc_get_error_message(response));
+      break;
+    }
+    JsonObject *result = protocol_object(o, "result");
+    if (q->discover_models) {
+      JsonNode *list =
+          result != NULL ? json_object_get_member(result, "models") : NULL;
+      if (list == NULL || !JSON_NODE_HOLDS_ARRAY(list)) {
+        transport_error(&error, "Provider does not support model discovery");
+        break;
+      }
+      JsonArray *a = json_node_get_array(list);
+      if (json_array_get_length(a) > 10000) {
+        transport_error(&error, "Provider returned more than 10000 models; "
+                                "enter a model ID manually");
+        break;
+      }
+      models = g_new0(char *, json_array_get_length(a) + 1);
+      for (guint i = 0; i < json_array_get_length(a); i++) {
+        JsonNode *v = json_array_get_element(a, i);
+        if (!JSON_NODE_HOLDS_VALUE(v) ||
+            json_node_get_value_type(v) != G_TYPE_STRING ||
+            strlen(json_node_get_string(v)) > 1024) {
+          transport_error(&error, "Provider sent an invalid model list");
+          break;
+        }
+        models[i] = g_strdup(json_node_get_string(v));
+      }
+      completed = error == NULL;
+      break;
+    }
+    if (g_strcmp0(protocol_string(result, "thread_id"), q->thread_id) != 0 ||
+        g_strcmp0(protocol_string(result, "request_id"), q->request_id) != 0) {
+      transport_error(&error,
+                      "Provider completion IDs do not match the request");
+      break;
+    }
+    const char *status = protocol_string(result, "status");
+    cancelled = g_strcmp0(status, "cancelled") == 0;
+    completed = cancelled || g_strcmp0(status, "completed") == 0;
+    if (!completed) {
+      transport_error(&error, "Provider sent an invalid completion status");
+      break;
+    }
+    if (!received && !cancelled) {
+      transport_error(&error, "Provider completed without receiving an answer");
+      completed = FALSE;
+      break;
+    }
+    if (began && !thread_store_set_resume(
+                     q->store, r->profile->id,
+                     protocol_string(result, "resume_state"), &error))
+      break;
   }
-
-  if (bytes_read > 0) {
-    buf[bytes_read] = '\0';
-    g_string_append_len(pr->read_buf, buf, bytes_read);
-    process_lines(pr);
+finished:
+  cancelled = cancelled || g_cancellable_is_cancelled(r->cancel);
+  if (error != NULL && t.pid > 0)
+    kill(-t.pid, SIGTERM);
+  transport_close(&t);
+  if (began) {
+    g_autoptr(GError) save_error = NULL;
+    if (!thread_store_finish(q->store,
+                             cancelled                    ? "cancelled"
+                             : completed && error == NULL ? "completed"
+                                                          : "failed",
+                             &save_error)) {
+      g_clear_error(&error);
+      error = g_steal_pointer(&save_error);
+      cancelled = FALSE;
+    }
   }
-
-  return G_SOURCE_CONTINUE;
+  redact_error(settings, &error);
+  post_event(r,
+             error == NULL && completed && !cancelled ? PROVIDER_EVENT_DONE
+                                                      : PROVIDER_EVENT_ERROR,
+             NULL,
+             cancelled       ? ""
+             : error != NULL ? error->message
+                             : "Provider request failed",
+             g_get_monotonic_time() - start, models, output_end);
 }
 
-static void setup_stdout_watch(PluginRunner *pr) {
-  GIOChannel *channel;
-
-  channel = g_io_channel_unix_new(pr->stdout_fd);
-  g_io_channel_set_encoding(channel, NULL, NULL);
-  pr->stdout_watch = g_io_add_watch(channel, G_IO_IN | G_IO_HUP | G_IO_ERR,
-                                    on_stdout_ready, pr);
-  g_io_channel_unref(channel);
-}
-
-/* ── VTable implementations ────────────────────────────────────── */
-
-Provider *plugin_runner_create(const char *command, RuntimeConfig *config,
-                               GError **error) {
-  PluginRunner *pr;
-
-  g_return_val_if_fail(command != NULL, NULL);
-  g_return_val_if_fail(config != NULL, NULL);
-
-  pr = g_new0(PluginRunner, 1);
-  pr->command = g_strdup(command);
-  pr->next_id = 1;
-  pr->read_buf = g_string_new(NULL);
-
-  if (!spawn_plugin(pr, error))
-    goto fail;
-
-  setup_stdout_watch(pr);
-
-  if (!do_initialize(pr, config, error))
-    goto fail;
-
-  {
-    Provider *p = g_new0(Provider, 1);
-
-    p->vtable = &plugin_runner_vtable;
-    p->impl = pr;
-    return p;
-  }
-
-fail:
-  if (pr->stdout_watch > 0)
-    g_source_remove(pr->stdout_watch);
-  if (pr->stdout_fd >= 0)
-    close(pr->stdout_fd);
-  if (pr->stdin_fd >= 0)
-    close(pr->stdin_fd);
-  if (pr->child_pid > 0)
-    g_spawn_close_pid(pr->child_pid);
-  plugin_runner_free(pr);
+static gpointer request_worker(gpointer data) {
+  Job *job = data;
+  run_job(job);
+  job_free(job);
   return NULL;
 }
 
-static gboolean runner_init(void **impl, RuntimeConfig *config,
-                            GError **error) {
-  (void)impl;
-  (void)config;
-  (void)error;
-  return TRUE;
-}
-
-static void runner_destroy(void *impl) {
-  PluginRunner *pr = impl;
-
-  if (pr == NULL)
-    return;
-
-  /* Send shutdown, then close stdin and clean up */
-  {
-    g_autoptr(JsonNode) req =
-        json_rpc_make_request("provider/shutdown", NULL, pr->next_id++);
-    g_autofree char *json = NULL;
-    g_autoptr(JsonGenerator) gen = NULL;
-    gsize len;
-
-    gen = json_generator_new();
-    json_generator_set_root(gen, req);
-    json_generator_set_pretty(gen, FALSE);
-    json = json_generator_to_data(gen, &len);
-
-    if (pr->stdin_fd >= 0) {
-      stdin_write(pr, json);
-      stdin_write(pr, "\n");
-    }
-  }
-
-  if (pr->stdout_watch > 0)
-    g_source_remove(pr->stdout_watch);
-
-  if (pr->stdin_fd >= 0)
-    close(pr->stdin_fd);
-  if (pr->stdout_fd >= 0)
-    close(pr->stdout_fd);
-
-  if (pr->child_pid > 0) {
-    g_spawn_close_pid(pr->child_pid);
-    pr->child_pid = 0;
-  }
-
-  plugin_runner_free(pr);
-}
-
-static void runner_cleanup_session(void *impl, gpointer tab_key) {
-  PluginRunner *pr = impl;
-
-  (void)pr;
-  (void)tab_key;
-  /* Plugin manages per-tab state via tab_id internally.
-     Promptr sends provider/cleanup_session via the protocol
-     when needed. No-op for now. */
-}
-
-static gboolean runner_submit(void *impl, gpointer tab_key, const char *query,
-                              const ProviderMessage *history, int n_history,
-                              const char *model, const char *agent,
-                              gboolean is_follow_up, GCancellable *cancellable,
+static gboolean runner_submit(void *impl, gpointer source,
+                              const ProviderRequest *q, GCancellable *cancel,
                               ProviderCallback callback, gpointer callback_data,
                               GError **error) {
-  PluginRunner *pr = impl;
-  g_autoptr(JsonBuilder) params = NULL;
-  g_autoptr(JsonBuilder) msg_builder = NULL;
-  g_autoptr(JsonNode) params_node = NULL;
-  g_autoptr(JsonNode) req = NULL;
-  const char *tab_id_str;
-  g_autofree char *auto_tab_id = NULL;
-
-  (void)cancellable;
-  (void)error;
-
-  auto_tab_id = g_strdup_printf("tab_%p", tab_key);
-  tab_id_str = auto_tab_id;
-
-  pr->callback = callback;
-  pr->callback_data = callback_data;
-  pr->active_tab = tab_key;
-  pr->submit_start = g_get_monotonic_time();
-  pr->submitting = TRUE;
-
-  params = json_builder_new();
-  json_builder_begin_object(params);
-
-  json_builder_set_member_name(params, "tab_id");
-  json_builder_add_string_value(params, tab_id_str);
-
-  json_builder_set_member_name(params, "query");
-  json_builder_add_string_value(params, query != NULL ? query : "");
-
-  json_builder_set_member_name(params, "is_follow_up");
-  json_builder_add_boolean_value(params, is_follow_up);
-
-  if (model != NULL && model[0] != '\0' && g_strcmp0(model, "None") != 0) {
-    json_builder_set_member_name(params, "model");
-    json_builder_add_string_value(params, model);
-  }
-
-  /* Build messages array from history */
-  json_builder_set_member_name(params, "messages");
-  json_builder_begin_array(params);
-  for (int i = 0; i < n_history; i++) {
-    const char *role_str;
-
-    if (history[i].content == NULL || history[i].content[0] == '\0')
-      continue;
-
-    switch (history[i].role) {
-    case PROVIDER_ROLE_ASSISTANT:
-      role_str = "assistant";
-      break;
-    case PROVIDER_ROLE_SYSTEM:
-      role_str = "system";
-      break;
-    default:
-      role_str = "user";
-      break;
-    }
-
-    json_builder_begin_object(params);
-    json_builder_set_member_name(params, "role");
-    json_builder_add_string_value(params, role_str);
-    json_builder_set_member_name(params, "content");
-    json_builder_add_string_value(params, history[i].content);
-    json_builder_end_object(params);
-  }
-  json_builder_end_array(params);
-
-  /* Agent block */
-  if (agent != NULL && agent[0] != '\0' && g_strcmp0(agent, "None") != 0) {
-    json_builder_set_member_name(params, "agent");
-    json_builder_begin_object(params);
-    json_builder_set_member_name(params, "name");
-    json_builder_add_string_value(params, agent);
-    json_builder_set_member_name(params, "content");
-    json_builder_add_string_value(params, agent);
-    json_builder_end_object(params);
-  }
-
-  json_builder_end_object(params);
-
-  params_node = json_builder_get_root(params);
-  req = json_rpc_make_request("provider/submit", params_node, pr->next_id++);
-
-  if (!protocol_write(pr, req)) {
-    g_set_error(error, G_IO_ERROR, G_IO_ERROR_FAILED,
-                "Failed to write submit request");
-    pr->submitting = FALSE;
+  Runner *r = impl;
+  if (r->busy)
+    return transport_error(error, "Provider already has a pending request");
+  if (q == NULL || q->thread_id == NULL || q->request_id == NULL ||
+      q->query == NULL)
+    return transport_error(error, "Invalid provider request");
+  r->busy = TRUE;
+  r->source = source;
+  r->callback = callback;
+  r->callback_data = callback_data;
+  g_clear_object(&r->cancel);
+  r->cancel = cancel != NULL ? g_object_ref(cancel) : g_cancellable_new();
+  Job *j = g_new0(Job, 1);
+  j->runner = runner_ref(r);
+  j->request = *q;
+  j->thread_id = g_strdup(q->thread_id);
+  j->request.thread_id = j->thread_id;
+  j->request_id = g_strdup(q->request_id);
+  j->request.request_id = j->request_id;
+  j->query = g_strdup(q->query);
+  j->request.query = j->query;
+  j->model = g_strdup(q->model);
+  j->request.model = j->model;
+  j->agent_name = g_strdup(q->agent_name);
+  j->request.agent_name = j->agent_name;
+  j->agent_content = g_strdup(q->agent_content);
+  j->request.agent_content = j->agent_content;
+  j->project_dir = g_strdup(q->project_dir);
+  j->request.project_dir = j->project_dir;
+  j->request.store = thread_store_ref(q->store);
+  GThread *thread =
+      g_thread_try_new("provider-request", request_worker, j, error);
+  if (thread == NULL) {
+    r->busy = FALSE;
+    job_free(j);
     return FALSE;
   }
-
+  g_thread_unref(thread);
   return TRUE;
 }
 
 static void runner_cancel(void *impl) {
-  PluginRunner *pr = impl;
-
-  if (!pr->submitting)
-    return;
-
-  {
-    g_autoptr(JsonNode) req =
-        json_rpc_make_request("provider/cancel", NULL, pr->next_id++);
-
-    protocol_write(pr, req);
-  }
+  Runner *r = impl;
+  if (r->cancel != NULL)
+    g_cancellable_cancel(r->cancel);
+  g_mutex_lock(&r->mutex);
+  g_cond_broadcast(&r->drained);
+  g_mutex_unlock(&r->mutex);
 }
-
-static void runner_cancel_tab(void *impl, gpointer tab_key) {
-  (void)impl;
-  (void)tab_key;
+static void runner_cancel_tab(void *impl, gpointer source) {
+  (void)source;
   runner_cancel(impl);
 }
-
-static char *runner_get_display_string(void *impl, const char *query,
-                                       const char *model, const char *agent,
-                                       gboolean is_follow_up) {
-  PluginRunner *pr = impl;
-  GString *s;
-
+static void runner_destroy(void *impl) {
+  Runner *r = impl;
+  runner_cancel(r);
+  runner_unref(r);
+}
+static char *display_string(void *impl, const char *query, const char *model,
+                            const char *agent, gboolean follow_up) {
+  Runner *r = impl;
+  (void)query;
   (void)agent;
-  (void)is_follow_up;
-
-  s = g_string_new(pr->command);
-  if (model != NULL && model[0] != '\0' && g_strcmp0(model, "None") != 0)
-    g_string_append_printf(s, " [%s]", model);
-  g_string_append_printf(s, " %s", query != NULL ? query : "");
-
-  return g_string_free(s, FALSE);
+  (void)follow_up;
+  return g_strdup_printf("%s%s%s", r->profile->name, model != NULL ? " / " : "",
+                         model != NULL ? model : "");
 }
+static ProviderVTable vtable = {.name = "plugin",
+                                .destroy = runner_destroy,
+                                .submit = runner_submit,
+                                .cancel = runner_cancel,
+                                .cancel_tab = runner_cancel_tab,
+                                .get_display_string = display_string};
 
-static char **runner_get_models(void *impl) {
-  (void)impl;
-  return NULL;
-}
-
-static char **runner_get_agents(void *impl) {
-  (void)impl;
-  return NULL;
+Provider *plugin_runner_create_profile(const ProviderProfile *profile) {
+  Runner *r = g_new0(Runner, 1);
+  r->refs = 1;
+  r->profile = provider_profile_copy(profile);
+  g_mutex_init(&r->mutex);
+  g_cond_init(&r->drained);
+  Provider *p = g_new0(Provider, 1);
+  p->vtable = &vtable;
+  p->impl = r;
+  return p;
 }

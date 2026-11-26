@@ -3,10 +3,10 @@ PKG_CONF := pkg-config
 
 GTK_CFLAGS  := $(shell $(PKG_CONF) --cflags gtk4 | sed 's/-I/-isystem /g')
 GTK_LIBS    := $(shell $(PKG_CONF) --libs gtk4)
-CURL_CFLAGS := $(shell $(PKG_CONF) --cflags libcurl)
-CURL_LIBS   := $(shell $(PKG_CONF) --libs libcurl)
 JSON_CFLAGS := $(shell $(PKG_CONF) --cflags json-glib-1.0)
 JSON_LIBS   := $(shell $(PKG_CONF) --libs json-glib-1.0)
+SECRET_CFLAGS := $(shell $(PKG_CONF) --cflags libsecret-1)
+SECRET_LIBS := $(shell $(PKG_CONF) --libs libsecret-1)
 LSH_PKG := $(shell $(PKG_CONF) --exists gtk4-layer-shell-0 && echo gtk4-layer-shell-0 || echo gtk-layer-shell-0)
 LSH_CFLAGS  := $(shell $(PKG_CONF) --cflags $(LSH_PKG) | sed 's/-I/-isystem /g')
 LSH_LIBS    := $(shell $(PKG_CONF) --libs $(LSH_PKG))
@@ -32,8 +32,8 @@ endif
 VERSION := $(shell cat VERSION)$(VER_SUFFIX)
 TARGET  := promptr$(VER_SUFFIX)
 
-CFLAGS  := -std=c11 $(WARN_FLAGS) $(OPT_FLAGS) -I. -Isrc $(GTK_CFLAGS) $(LSH_CFLAGS) $(SV_CFLAGS) $(CURL_CFLAGS) $(JSON_CFLAGS) -DVERSION=\"$(VERSION)\" -DAPP_ID=\"$(APP_ID)\" $(DEBUG_FLAGS)
-LDFLAGS := $(GTK_LIBS) $(LSH_LIBS) $(SV_LIBS) $(CURL_LIBS) $(JSON_LIBS)
+CFLAGS  = -std=c11 $(WARN_FLAGS) $(OPT_FLAGS) -I. -Isrc $(GTK_CFLAGS) $(LSH_CFLAGS) $(SV_CFLAGS) $(JSON_CFLAGS) $(SECRET_CFLAGS) -DVERSION=\"$(VERSION)\" -DAPP_ID=\"$(APP_ID)\" -DPROMPTR_PLUGIN_DIR_DEFAULT=\"$(PLUGINSDIR)\" $(DEBUG_FLAGS)
+LDFLAGS := $(GTK_LIBS) $(LSH_LIBS) $(SV_LIBS) $(JSON_LIBS) $(SECRET_LIBS)
 
 SRCDIR   := src
 BUILDDIR := build/$(BUILD)
@@ -57,7 +57,7 @@ $(TARGET): $(OBJECTS)
 $(BUILDDIR)/%.o: $(SRCDIR)/%.c | $(BUILDDIR)
 	$(CC) $(CFLAGS) -MMD -MP -MF $(BUILDDIR)/$*.d -c $< -o $@
 
-$(JSONRPC_OBJ): $(JSONRPC_SRC)
+$(JSONRPC_OBJ): $(JSONRPC_SRC) | $(BUILDDIR)
 	$(CC) $(CFLAGS) -MMD -MP -MF $(BUILDDIR)/jsonrpc.d -c $< -o $@
 
 $(BUILDDIR):
@@ -83,7 +83,9 @@ $(PROVIDERS_DIR)/promptr-opencode/promptr-opencode:
 $(PROVIDERS_DIR)/promptr-openrouter/promptr-openrouter:
 	$(MAKE) -C $(PROVIDERS_DIR)/promptr-openrouter
 
-providers: $(PROVIDER_BINS)
+providers:
+	$(MAKE) -C providers/promptr-opencode BUILD=$(BUILD)
+	$(MAKE) -C providers/promptr-openrouter BUILD=$(BUILD)
 
 install: $(TARGET) providers
 	install -D -m755 $(TARGET) $(DESTDIR)$(BINDIR)/$(TARGET)
@@ -103,7 +105,10 @@ uninstall:
 	rm -f $(DESTDIR)$(BINDIR)/$(TARGET)
 	rm -rf $(DESTDIR)$(PLUGINSDIR)
 
-.PHONY: clean install uninstall debug release r config providers
+.PHONY: clean install uninstall debug release r config providers test
+
+test:
+	python3 tests/run.py
 
 debug:
 	$(MAKE) BUILD=debug
@@ -119,13 +124,4 @@ r:
 	PROMPTR_PLUGIN_DIR=providers ./promptr-debug
 
 config:
-	$(MAKE) clean
-	$(MAKE) BUILD=release
-	@rm -rf /tmp/promptr-config-check
-	@mkdir -p /tmp/promptr-config-check/.config
-	@printf "Checking generated config against repo template...\n"
-	@XDG_CONFIG_HOME=/tmp/promptr-config-check/.config \
-		timeout 2 ./$(TARGET) >/dev/null 2>&1 || true
-	@diff -u config /tmp/promptr-config-check/.config/promptr/config || \
-		printf "^^^ config template is out of sync with CONFIG_DEFAULTS[]\n"
-	@rm -rf /tmp/promptr-config-check
+	python3 tests/check_config.py

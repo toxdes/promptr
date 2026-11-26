@@ -1,622 +1,252 @@
-#include "../../lib/promptr-protocol/jsonrpc.h"
+#include "../../lib/promptr-protocol/provider-server.h"
 #include <curl/curl.h>
-#include <glib.h>
-#include <json-glib/json-glib.h>
-#include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
-
-#define OPENROUTER_DEFAULT_MODEL "openai/gpt-4o-mini"
-#define HEARTBEAT_TIMEOUT_US     (90 * G_TIME_SPAN_SECOND)
-
-/* ── state ─────────────────────────────────────────────────────── */
 
 typedef struct {
-  char *api_key;
-  char *base_url;
+  GCancellable *cancel;
+  ProviderEmit emit;
+  gpointer emit_data;
+  GString *buffer;
+  GString *body;
+  GError *error;
+  gboolean done;
+} Transfer;
 
-  char *active_tab_id;
-  char *active_model;
-
-  GString *sse_buffer;
-  char *full_output;
-  gboolean done_received;
-  gboolean saw_data_event;
-  gint64 start_time;
-  gint64 last_event_time;
-
-  CURLM *multi;
-  CURL *easy;
-  guint curl_idle_id;
-  gboolean cancelled;
-} ProviderState;
-
-/* ── forward declarations ──────────────────────────────────────── */
-
-static void write_stream_event(const char *tab_id, const char *type,
-                               const char *output);
-static void write_error_event(const char *tab_id, const char *msg);
-static gboolean on_curl_idle(gpointer user_data);
-static void process_sse(ProviderState *state, const char *tab_id);
-
-/* ── helpers ───────────────────────────────────────────────────── */
-
-static void write_stream_event(const char *tab_id, const char *type,
-                               const char *output) {
-  JsonBuilder *builder = json_builder_new();
-  JsonNode *p, *event;
-
-  json_builder_begin_object(builder);
-  json_builder_set_member_name(builder, "tab_id");
-  json_builder_add_string_value(builder, tab_id != NULL ? tab_id : "");
-  json_builder_set_member_name(builder, "type");
-  json_builder_add_string_value(builder, type);
-  json_builder_set_member_name(builder, "output");
-  json_builder_add_string_value(builder, output != NULL ? output : "");
-  json_builder_end_object(builder);
-
-  p = json_builder_get_root(builder);
-  event = json_rpc_make_notification("provider/event", p);
-  g_object_unref(builder);
-
-  json_rpc_write(stdout, event, NULL);
-  json_node_free(event);
-  fflush(stdout);
+static const char *setting(JsonObject *settings, const char *key,
+                           const char *env, const char *fallback) {
+  const char *value = protocol_string(settings, key);
+  if (value == NULL || !*value)
+    value = env != NULL ? g_getenv(env) : NULL;
+  return value != NULL && *value ? value : fallback;
 }
 
-static void write_error_event(const char *tab_id, const char *msg) {
-  JsonBuilder *builder = json_builder_new();
-  JsonNode *p, *event;
-
-  json_builder_begin_object(builder);
-  json_builder_set_member_name(builder, "tab_id");
-  json_builder_add_string_value(builder, tab_id != NULL ? tab_id : "");
-  json_builder_set_member_name(builder, "type");
-  json_builder_add_string_value(builder, "error");
-  json_builder_set_member_name(builder, "error_msg");
-  json_builder_add_string_value(builder, msg != NULL ? msg : "");
-  json_builder_end_object(builder);
-
-  p = json_builder_get_root(builder);
-  event = json_rpc_make_notification("provider/event", p);
-  g_object_unref(builder);
-
-  json_rpc_write(stdout, event, NULL);
-  json_node_free(event);
-  fflush(stdout);
-}
-
-/* ── SSE parser (extracted from openrouter.c) ──────────────────── */
-
-static char *sse_extract_content(const char *json_line) {
-  g_autoptr(JsonParser) parser = NULL;
-  g_autoptr(GError) error = NULL;
-  JsonNode *root;
-  JsonObject *obj;
-  JsonArray *choices;
-  JsonNode *choice_node;
-  JsonObject *choice_obj;
-  JsonObject *delta;
-  const char *content;
-
-  if (json_line == NULL || json_line[0] == '\0')
-    return NULL;
-
-  parser = json_parser_new();
-  if (!json_parser_load_from_data(parser, json_line, -1, &error))
-    return NULL;
-
-  root = json_parser_get_root(parser);
-  if (root == NULL || JSON_NODE_HOLDS_VALUE(root))
-    return NULL;
-
-  obj = json_node_get_object(root);
-  choices = json_object_get_array_member(obj, "choices");
-  if (choices == NULL || json_array_get_length(choices) == 0)
-    return NULL;
-
-  choice_node = json_array_get_element(choices, 0);
-  if (choice_node == NULL || JSON_NODE_HOLDS_VALUE(choice_node))
-    return NULL;
-
-  choice_obj = json_node_get_object(choice_node);
-  delta = json_object_get_object_member(choice_obj, "delta");
-  if (delta == NULL)
-    return NULL;
-
-  if (json_object_has_member(delta, "content")) {
-    content = json_object_get_string_member(delta, "content");
-    if (content != NULL && content[0] != '\0')
-      return g_strdup(content);
+static gboolean initialize(JsonObject *settings, gboolean discovery,
+                           GError **error) {
+  if (!discovery &&
+      setting(settings, "api_key", "OPENROUTER_API_KEY", NULL) == NULL) {
+    g_set_error_literal(
+        error, G_IO_ERROR, G_IO_ERROR_PERMISSION_DENIED,
+        "No OpenRouter API key configured. Open Preferences, "
+        "select OpenRouter and enter your API key, or set OPENROUTER_API_KEY.");
+    return FALSE;
   }
-
-  return NULL;
+  const char *url =
+      setting(settings, "base_url", NULL, "https://openrouter.ai/api/v1");
+  if (!g_str_has_prefix(url, "https://") && !g_str_has_prefix(url, "http://")) {
+    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
+                        "Endpoint must start with https:// or http://");
+    return FALSE;
+  }
+  return TRUE;
 }
 
-static void process_sse(ProviderState *state, const char *tab_id) {
-  char *p;
-  char *event_end;
-
-  if (state->sse_buffer == NULL)
-    return;
-
-  p = state->sse_buffer->str;
-
-  for (;;) {
-    int skip;
-    char *segment;
-    const char *data_val;
-
-    event_end = strstr(p, "\r\n\r\n");
-    if (event_end != NULL) {
-      skip = 4;
-    } else {
-      event_end = strstr(p, "\n\n");
-      if (event_end == NULL)
-        break;
-      skip = 2;
-    }
-
-    segment = g_strndup(p, event_end - p);
-
-    data_val = strstr(segment, "data:");
-    if (data_val != NULL) {
-      data_val += 5;
-      while (*data_val == ' ' || *data_val == '\t')
-        data_val++;
-
-      if (strcmp(data_val, "[DONE]") == 0) {
-        state->done_received = TRUE;
-      } else {
-        char *content = sse_extract_content(data_val);
-
-        if (content != NULL && content[0] != '\0') {
-          if (state->full_output == NULL)
-            state->full_output = g_strdup(content);
-          else {
-            char *old = state->full_output;
-            state->full_output = g_strdup_printf("%s%s", old, content);
-            g_free(old);
-          }
-
-          state->saw_data_event = TRUE;
-          write_stream_event(tab_id, "chunk", content);
-        }
-        g_free(content);
-      }
-    }
-
-    g_free(segment);
-    p = event_end + skip;
-  }
-
-  /* Keep remaining partial data */
-  {
-    GString *remaining = g_string_new(p);
-    g_string_free(state->sse_buffer, TRUE);
-    state->sse_buffer = remaining;
-  }
+static int progress(void *data, curl_off_t a, curl_off_t b, curl_off_t c,
+                    curl_off_t d) {
+  Transfer *t = data;
+  (void)a;
+  (void)b;
+  (void)c;
+  (void)d;
+  return g_cancellable_is_cancelled(t->cancel);
 }
 
-/* ── HTTP callbacks ─────────────────────────────────────────────── */
-
-static size_t on_http_data(char *ptr, size_t size, size_t nmemb,
-                           void *user_data) {
-  ProviderState *state = user_data;
-  size_t total = size * nmemb;
-
-  if (state->done_received || state->cancelled)
-    return total;
-
-  g_string_append_len(state->sse_buffer, ptr, total);
-
-  state->last_event_time = g_get_monotonic_time();
-
-  if (!state->saw_data_event &&
-      state->last_event_time - state->start_time > HEARTBEAT_TIMEOUT_US) {
-    write_error_event(state->active_tab_id,
-                      "OpenRouter sent only heartbeats for "
-                      "30s — model is queued.");
-    state->cancelled = TRUE;
+static size_t receive(char *data, size_t size, size_t count, void *user_data) {
+  Transfer *t = user_data;
+  gsize len = size * count;
+  if (t->emit == NULL) {
+    if (t->body->len + len > 8 * 1024 * 1024)
+      return 0;
+    g_string_append_len(t->body, data, len);
+    return len;
+  }
+  if (t->buffer->len + len > 1024 * 1024)
     return 0;
-  }
-
-  process_sse(state, state->active_tab_id);
-
-  return total;
-}
-
-/* ── curl idle handler ──────────────────────────────────────────── */
-
-static gboolean on_curl_idle(gpointer user_data) {
-  ProviderState *state = user_data;
-  int running_handles;
-  CURLMsg *msg;
-  int msgs_left;
-
-  if (state->cancelled)
-    goto cleanup;
-
-  curl_multi_perform(state->multi, &running_handles);
-
-  if (running_handles > 0)
-    return G_SOURCE_CONTINUE;
-
-  /* Transfer complete */
-  while ((msg = curl_multi_info_read(state->multi, &msgs_left)) != NULL) {
-    if (msg->msg == CURLMSG_DONE) {
-      long response_code;
-
-      curl_easy_getinfo(msg->easy_handle, CURLINFO_RESPONSE_CODE,
-                        &response_code);
-
-      if (response_code != 200) {
-        g_warning("openrouter-provider: HTTP %ld", response_code);
-        write_error_event(state->active_tab_id, "HTTP error");
-        goto cleanup;
-      }
+  g_string_append_len(t->buffer, data, len);
+  for (;;) {
+    char *newline = strchr(t->buffer->str, '\n');
+    if (newline == NULL)
+      break;
+    gsize length = newline - t->buffer->str;
+    g_autofree char *line = g_strndup(t->buffer->str, length);
+    g_string_erase(t->buffer, 0, length + 1);
+    g_strchomp(line);
+    if (!g_str_has_prefix(line, "data:"))
+      continue;
+    const char *payload = line + 5;
+    while (*payload == ' ')
+      payload++;
+    if (g_strcmp0(payload, "[DONE]") == 0) {
+      t->done = TRUE;
+      continue;
+    }
+    g_autoptr(JsonParser) parser = json_parser_new();
+    if (!json_parser_load_from_data(parser, payload, -1, &t->error))
+      return 0;
+    JsonNode *root = json_parser_get_root(parser);
+    if (!JSON_NODE_HOLDS_OBJECT(root))
+      return 0;
+    JsonObject *o = json_node_get_object(root);
+    if (protocol_object(o, "error") != NULL) {
+      g_set_error_literal(&t->error, G_IO_ERROR, G_IO_ERROR_FAILED,
+                          "Backend reported a streaming error");
+      return 0;
+    }
+    JsonNode *choices = json_object_get_member(o, "choices");
+    if (choices == NULL || !JSON_NODE_HOLDS_ARRAY(choices))
+      continue;
+    JsonArray *array = json_node_get_array(choices);
+    for (guint i = 0; i < json_array_get_length(array); i++) {
+      JsonNode *choice = json_array_get_element(array, i);
+      if (!JSON_NODE_HOLDS_OBJECT(choice))
+        continue;
+      JsonObject *delta =
+          protocol_object(json_node_get_object(choice), "delta");
+      const char *text = protocol_string(delta, "content");
+      if (text != NULL && *text && !t->emit(text, t->emit_data, &t->error))
+        return 0;
     }
   }
-
-  process_sse(state, state->active_tab_id);
-
-  write_stream_event(state->active_tab_id, "done",
-                     state->full_output != NULL ? state->full_output : "");
-
-cleanup:
-  state->curl_idle_id = 0;
-  if (state->multi != NULL) {
-    curl_multi_cleanup(state->multi);
-    state->multi = NULL;
-  }
-  if (state->easy != NULL) {
-    curl_easy_cleanup(state->easy);
-    state->easy = NULL;
-  }
-  g_free(state->active_tab_id);
-  state->active_tab_id = NULL;
-  g_free(state->active_model);
-  state->active_model = NULL;
-
-  return G_SOURCE_REMOVE;
+  return len;
 }
 
-/* ── request handlers ───────────────────────────────────────────── */
-
-static gboolean handle_initialize(ProviderState *state, JsonNode *params) {
-  JsonObject *obj;
-  JsonNode *config_node;
-  const char *key = NULL, *url = NULL;
-
-  if (params != NULL && !JSON_NODE_HOLDS_VALUE(params)) {
-    obj = json_node_get_object(params);
-    if (json_object_has_member(obj, "config")) {
-      config_node = json_object_get_member(obj, "config");
-      if (config_node != NULL && !JSON_NODE_HOLDS_VALUE(config_node)) {
-        JsonObject *cfg = json_node_get_object(config_node);
-
-        if (json_object_has_member(cfg, "api_key"))
-          key = json_object_get_string_member(cfg, "api_key");
-        if (json_object_has_member(cfg, "base_url"))
-          url = json_object_get_string_member(cfg, "base_url");
-      }
-    }
-  }
-
-  if (key == NULL || key[0] == '\0')
-    key = getenv("OPENROUTER_API_KEY");
-
-  if (key == NULL || key[0] == '\0') {
-    g_warning("openrouter-provider: API key not configured");
+static gboolean transfer(JsonObject *settings, const char *path,
+                         const char *body, Transfer *t, GError **error) {
+  CURL *curl = curl_easy_init();
+  if (curl == NULL) {
+    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_FAILED,
+                        "Could not initialize HTTP transport");
     return FALSE;
   }
-
-  state->api_key = g_strdup(key);
-  state->base_url =
-      g_strdup(url != NULL ? url : "https://openrouter.ai/api/v1");
-
-  fprintf(stderr, "openrouter-provider: using base=%s\n", state->base_url);
-  return TRUE;
-}
-
-static gboolean handle_submit(ProviderState *state, JsonNode *params) {
-  JsonObject *obj;
-  const char *tab_id, *model_str;
-  JsonBuilder *body;
-  g_autofree char *body_json = NULL;
-  g_autofree char *auth_header = NULL;
-  g_autofree char *url = NULL;
+  g_autofree char *base = g_strdup(
+      setting(settings, "base_url", NULL, "https://openrouter.ai/api/v1"));
+  while (*base && base[strlen(base) - 1] == '/')
+    base[strlen(base) - 1] = '\0';
+  g_autofree char *url = g_strconcat(base, path, NULL);
+  g_autofree char *auth =
+      g_strconcat("Authorization: Bearer ",
+                  setting(settings, "api_key", "OPENROUTER_API_KEY", ""), NULL);
   struct curl_slist *headers = NULL;
-  g_autoptr(JsonNode) body_node = NULL;
-  size_t body_len;
-
-  if (params == NULL || JSON_NODE_HOLDS_VALUE(params))
-    return FALSE;
-
-  obj = json_node_get_object(params);
-
-  if (!json_object_has_member(obj, "tab_id"))
-    return FALSE;
-
-  tab_id = json_object_get_string_member(obj, "tab_id");
-
-  model_str = json_object_has_member(obj, "model") &&
-                      g_strcmp0(json_object_get_string_member(obj, "model"),
-                                "None") != 0
-                  ? json_object_get_string_member(obj, "model")
-                  : OPENROUTER_DEFAULT_MODEL;
-
-  state->active_tab_id = g_strdup(tab_id);
-  state->active_model = g_strdup(model_str);
-
-  /* Reset per-request state */
-  if (state->sse_buffer != NULL)
-    g_string_free(state->sse_buffer, TRUE);
-  state->sse_buffer = g_string_new(NULL);
-  g_free(state->full_output);
-  state->full_output = NULL;
-  state->done_received = FALSE;
-  state->saw_data_event = FALSE;
-  state->start_time = g_get_monotonic_time();
-  state->last_event_time = state->start_time;
-  state->cancelled = FALSE;
-
-  /* Build request body using messages from submit params */
-  body = json_builder_new();
-  json_builder_begin_object(body);
-  json_builder_set_member_name(body, "model");
-  json_builder_add_string_value(body, model_str);
-  json_builder_set_member_name(body, "stream");
-  json_builder_add_boolean_value(body, TRUE);
-
-  json_builder_set_member_name(body, "messages");
-  json_builder_begin_array(body);
-
-  /* Add system message from agent if present */
-  if (json_object_has_member(obj, "agent")) {
-    JsonNode *agent_node = json_object_get_member(obj, "agent");
-
-    if (agent_node != NULL && !JSON_NODE_HOLDS_VALUE(agent_node)) {
-      JsonObject *agent_obj = json_node_get_object(agent_node);
-      const char *agent_content = NULL;
-
-      if (json_object_has_member(agent_obj, "content"))
-        agent_content = json_object_get_string_member(agent_obj, "content");
-
-      if (agent_content != NULL && agent_content[0] != '\0') {
-        json_builder_begin_object(body);
-        json_builder_set_member_name(body, "role");
-        json_builder_add_string_value(body, "system");
-        json_builder_set_member_name(body, "content");
-        json_builder_add_string_value(body, agent_content);
-        json_builder_end_object(body);
-      }
-    }
-  }
-
-  /* Add messages from history */
-  if (json_object_has_member(obj, "messages")) {
-    JsonArray *messages = json_object_get_array_member(obj, "messages");
-
-    if (messages != NULL) {
-      for (guint i = 0; i < json_array_get_length(messages); i++) {
-        JsonNode *msg_node = json_array_get_element(messages, i);
-
-        if (msg_node != NULL && !JSON_NODE_HOLDS_VALUE(msg_node))
-          json_builder_add_value(body, json_node_copy(msg_node));
-      }
-    }
-  }
-
-  json_builder_end_array(body);
-  json_builder_end_object(body);
-
-  body_node = json_builder_get_root(body);
-  {
-    g_autoptr(JsonGenerator) gen = json_generator_new();
-    gsize data_len;
-
-    json_generator_set_root(gen, body_node);
-    json_generator_set_pretty(gen, FALSE);
-    body_json = json_generator_to_data(gen, &data_len);
-    body_len = data_len;
-  }
-  g_object_unref(body);
-
-  /* Build HTTP headers */
-  auth_header = g_strdup_printf("Authorization: Bearer %s", state->api_key);
   headers = curl_slist_append(headers, "Content-Type: application/json");
-  headers = curl_slist_append(headers, auth_header);
-
-  /* Build URL */
-  url = g_strdup_printf("%s/chat/completions", state->base_url);
-
-  /* Set up curl easy handle */
-  state->easy = curl_easy_init();
-  curl_easy_setopt(state->easy, CURLOPT_URL, url);
-  curl_easy_setopt(state->easy, CURLOPT_HTTPHEADER, headers);
-  curl_easy_setopt(state->easy, CURLOPT_POSTFIELDS, body_json);
-  curl_easy_setopt(state->easy, CURLOPT_POSTFIELDSIZE, (long)body_len);
-  curl_easy_setopt(state->easy, CURLOPT_WRITEFUNCTION, on_http_data);
-  curl_easy_setopt(state->easy, CURLOPT_WRITEDATA, state);
-  curl_easy_setopt(state->easy, CURLOPT_TIMEOUT, 120L);
-  curl_easy_setopt(state->easy, CURLOPT_USERAGENT, "promptr-openrouter/1.0");
-
-  /* Add to multi handle */
-  state->multi = curl_multi_init();
-  curl_multi_add_handle(state->multi, state->easy);
-
-  /* Register idle handler for processing curl events */
-  state->curl_idle_id = g_idle_add(on_curl_idle, state);
-
+  if (setting(settings, "api_key", "OPENROUTER_API_KEY", NULL) != NULL)
+    headers = curl_slist_append(headers, auth);
+  curl_easy_setopt(curl, CURLOPT_URL, url);
+  curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+  curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 20L);
+  curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
+  curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, receive);
+  curl_easy_setopt(curl, CURLOPT_WRITEDATA, t);
+  curl_easy_setopt(curl, CURLOPT_XFERINFOFUNCTION, progress);
+  curl_easy_setopt(curl, CURLOPT_XFERINFODATA, t);
+  curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 0L);
+  curl_easy_setopt(curl, CURLOPT_USERAGENT, "promptr-openrouter/2.0");
+  if (body != NULL) {
+    curl_easy_setopt(curl, CURLOPT_POSTFIELDS, body);
+    curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, (long)strlen(body));
+  }
+  CURLcode code = curl_easy_perform(curl);
+  long status = 0;
+  curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &status);
   curl_slist_free_all(headers);
-
+  curl_easy_cleanup(curl);
+  if (t->error != NULL) {
+    g_propagate_error(error, g_steal_pointer(&t->error));
+    return FALSE;
+  }
+  if (code != CURLE_OK || status < 200 || status >= 300) {
+    g_set_error(error, G_IO_ERROR, G_IO_ERROR_FAILED,
+                "Backend request failed (HTTP %ld, %s)", status,
+                curl_easy_strerror(code));
+    return FALSE;
+  }
   return TRUE;
 }
 
-static gboolean handle_cancel(ProviderState *state) {
-  state->cancelled = TRUE;
-  if (state->active_tab_id != NULL)
-    write_error_event(state->active_tab_id, "");
+static gboolean submit(JsonObject *settings, JsonObject *request,
+                       GCancellable *cancel, ProviderEmit emit,
+                       gpointer emit_data, char **resume, GError **error) {
+  (void)resume;
+  if (setting(settings, "api_key", "OPENROUTER_API_KEY", NULL) == NULL) {
+    g_set_error_literal(
+        error, G_IO_ERROR, G_IO_ERROR_PERMISSION_DENIED,
+        "No OpenRouter API key configured. Open Preferences, "
+        "select OpenRouter and enter your API key, or set OPENROUTER_API_KEY.");
+    return FALSE;
+  }
+  g_autoptr(JsonObject) body = json_object_new();
+  const char *model = protocol_string(request, "model");
+  json_object_set_string_member(
+      body, "model", model != NULL && *model ? model : "openrouter/auto");
+  json_object_set_boolean_member(body, "stream", TRUE);
+  if (protocol_boolean(request, "connection_test"))
+    json_object_set_int_member(body, "max_tokens", 16);
+  JsonArray *messages = json_array_new();
+  const char *context =
+      protocol_string(protocol_object(request, "agent"), "content");
+  if (context != NULL && *context) {
+    JsonObject *system = json_object_new();
+    json_object_set_string_member(system, "role", "system");
+    json_object_set_string_member(system, "content", context);
+    json_array_add_object_element(messages, system);
+  }
+  JsonArray *history = json_object_get_array_member(request, "messages");
+  for (guint i = 0; i < json_array_get_length(history); i++)
+    json_array_add_element(messages,
+                           json_node_copy(json_array_get_element(history, i)));
+  json_object_set_array_member(body, "messages", messages);
+  g_autoptr(JsonNode) node = json_node_new(JSON_NODE_OBJECT);
+  json_node_set_object(node, body);
+  g_autofree char *json = json_to_string(node, FALSE);
+  g_autoptr(GString) buffer = g_string_new(NULL);
+  Transfer t = {
+      .cancel = cancel, .emit = emit, .emit_data = emit_data, .buffer = buffer};
+  if (!transfer(settings, "/chat/completions", json, &t, error))
+    return FALSE;
+  if (!t.done) {
+    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_FAILED,
+                        "Backend stream ended without a completion marker");
+    return FALSE;
+  }
   return TRUE;
 }
 
-/* ── main ───────────────────────────────────────────────────────── */
-
-static gboolean on_stdin_ready(GIOChannel *source, GIOCondition cond,
-                               gpointer user_data) {
-  ProviderState *state = user_data;
-  g_autofree char *line = NULL;
-  gsize len;
-  g_autoptr(JsonParser) parser = NULL;
-  g_autoptr(GError) error = NULL;
-  JsonNode *root;
-  const char *method;
-  JsonNode *params;
-  int id;
-
-  if (cond & (G_IO_HUP | G_IO_ERR)) {
-    g_main_loop_quit(g_main_loop_new(NULL, FALSE));
-    return G_SOURCE_REMOVE;
+static char **models(JsonObject *settings, GCancellable *cancel,
+                     GError **error) {
+  g_autoptr(GString) body = g_string_new(NULL);
+  Transfer t = {.cancel = cancel, .body = body};
+  if (!transfer(settings, "/models", NULL, &t, error))
+    return NULL;
+  g_autoptr(JsonParser) parser = json_parser_new();
+  if (!json_parser_load_from_data(parser, body->str, body->len, error))
+    return NULL;
+  JsonNode *root = json_parser_get_root(parser);
+  JsonNode *data =
+      JSON_NODE_HOLDS_OBJECT(root)
+          ? json_object_get_member(json_node_get_object(root), "data")
+          : NULL;
+  if (data == NULL || !JSON_NODE_HOLDS_ARRAY(data)) {
+    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
+                        "Backend returned an invalid model list");
+    return NULL;
   }
-
-  {
-    GIOStatus status;
-
-    status = g_io_channel_read_line(source, &line, &len, NULL, &error);
-    if (status != G_IO_STATUS_NORMAL) {
-      g_main_loop_quit(g_main_loop_new(NULL, FALSE));
-      return G_SOURCE_REMOVE;
-    }
+  GPtrArray *out = g_ptr_array_new_with_free_func(g_free);
+  JsonArray *array = json_node_get_array(data);
+  for (guint i = 0; i < json_array_get_length(array); i++) {
+    JsonNode *n = json_array_get_element(array, i);
+    const char *id = JSON_NODE_HOLDS_OBJECT(n)
+                         ? protocol_string(json_node_get_object(n), "id")
+                         : NULL;
+    if (id != NULL)
+      g_ptr_array_add(out, g_strdup(id));
   }
-
-  while (len > 0 && (line[len - 1] == '\n' || line[len - 1] == '\r'))
-    line[--len] = '\0';
-
-  if (line[0] == '\0')
-    return G_SOURCE_CONTINUE;
-
-  parser = json_parser_new();
-  if (!json_parser_load_from_data(parser, line, -1, &error))
-    return G_SOURCE_CONTINUE;
-
-  root = json_parser_get_root(parser);
-  if (root == NULL || JSON_NODE_HOLDS_VALUE(root))
-    return G_SOURCE_CONTINUE;
-
-  method = json_rpc_get_method(root);
-  params = json_rpc_get_params(root);
-  id = json_rpc_get_id(root);
-
-  if (method != NULL && g_strcmp0(method, "provider/shutdown") == 0) {
-    g_main_loop_quit(g_main_loop_new(NULL, FALSE));
-    return G_SOURCE_REMOVE;
-  }
-
-  if (method != NULL && id >= 0) {
-    gboolean handled = TRUE;
-
-    if (g_strcmp0(method, "provider/initialize") == 0) {
-      g_autoptr(JsonBuilder) caps = NULL;
-      g_autoptr(JsonNode) caps_node = NULL;
-      g_autoptr(JsonNode) resp = NULL;
-
-      if (!handle_initialize(state, params)) {
-        g_autoptr(JsonNode) err =
-            json_rpc_make_error(-32010, "API key not configured", id);
-        json_rpc_write(stdout, err, NULL);
-        fflush(stdout);
-        return G_SOURCE_CONTINUE;
-      }
-
-      caps = json_builder_new();
-      json_builder_begin_object(caps);
-      json_builder_set_member_name(caps, "protocol_version");
-      json_builder_add_string_value(caps, "1.0");
-      json_builder_set_member_name(caps, "server_capabilities");
-      json_builder_begin_object(caps);
-      json_builder_set_member_name(caps, "streaming");
-      json_builder_add_boolean_value(caps, TRUE);
-      json_builder_set_member_name(caps, "tools");
-      json_builder_add_boolean_value(caps, FALSE);
-      json_builder_set_member_name(caps, "agent_mode");
-      json_builder_add_string_value(caps, "content");
-      json_builder_end_object(caps);
-      json_builder_end_object(caps);
-
-      caps_node = json_builder_get_root(caps);
-      resp = json_rpc_make_response(caps_node, id);
-      json_rpc_write(stdout, resp, NULL);
-      fflush(stdout);
-      return G_SOURCE_CONTINUE;
-    }
-
-    if (g_strcmp0(method, "provider/submit") == 0) {
-      handled = handle_submit(state, params);
-    } else if (g_strcmp0(method, "provider/cancel") == 0) {
-      handled = handle_cancel(state);
-    } else {
-      g_autoptr(JsonNode) err =
-          json_rpc_make_error(-32601, "Method not found", id);
-      json_rpc_write(stdout, err, NULL);
-      fflush(stdout);
-      return G_SOURCE_CONTINUE;
-    }
-
-    if (handled) {
-      g_autoptr(JsonNode) resp = json_rpc_make_ok(id);
-      json_rpc_write(stdout, resp, NULL);
-      fflush(stdout);
-    } else {
-      g_autoptr(JsonNode) err =
-          json_rpc_make_error(-32000, "Handler failed", id);
-      json_rpc_write(stdout, err, NULL);
-      fflush(stdout);
-    }
-  }
-
-  return G_SOURCE_CONTINUE;
+  g_ptr_array_add(out, NULL);
+  return (char **)g_ptr_array_free(out, FALSE);
 }
 
 int main(void) {
-  ProviderState state;
-  GIOChannel *stdin_channel;
-  GMainLoop *loop;
-
-  memset(&state, 0, sizeof(state));
-
-  setvbuf(stdout, NULL, _IONBF, 0);
-  curl_global_init(CURL_GLOBAL_ALL);
-
-  stdin_channel = g_io_channel_unix_new(STDIN_FILENO);
-  g_io_channel_set_encoding(stdin_channel, NULL, NULL);
-  g_io_add_watch(stdin_channel, G_IO_IN | G_IO_HUP | G_IO_ERR, on_stdin_ready,
-                 &state);
-  g_io_channel_unref(stdin_channel);
-
-  loop = g_main_loop_new(NULL, FALSE);
-  g_main_loop_run(loop);
-  g_main_loop_unref(loop);
-
-  if (state.multi != NULL) {
-    curl_multi_cleanup(state.multi);
-    state.multi = NULL;
-  }
-  if (state.easy != NULL) {
-    curl_easy_cleanup(state.easy);
-    state.easy = NULL;
-  }
-  if (state.curl_idle_id > 0)
-    g_source_remove(state.curl_idle_id);
-  g_free(state.api_key);
-  g_free(state.base_url);
-  g_free(state.active_tab_id);
-  g_free(state.active_model);
-  g_free(state.full_output);
-  if (state.sse_buffer != NULL)
-    g_string_free(state.sse_buffer, TRUE);
-
+  if (curl_global_init(CURL_GLOBAL_DEFAULT) != CURLE_OK)
+    return 1;
+  const ProviderBackend backend = {initialize, submit, models};
+  int code = provider_server_run(&backend);
   curl_global_cleanup();
-  return 0;
+  return code;
 }

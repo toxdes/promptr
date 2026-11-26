@@ -2,40 +2,102 @@
 #include <errno.h>
 #include <string.h>
 
-#define MAX_LINE 65536
+const char *protocol_string(JsonObject *object, const char *member) {
+  JsonNode *node =
+      object != NULL ? json_object_get_member(object, member) : NULL;
+  return node != NULL && JSON_NODE_HOLDS_VALUE(node) &&
+                 json_node_get_value_type(node) == G_TYPE_STRING
+             ? json_node_get_string(node)
+             : NULL;
+}
+
+gboolean protocol_boolean(JsonObject *object, const char *member) {
+  JsonNode *node =
+      object != NULL ? json_object_get_member(object, member) : NULL;
+  return node != NULL && JSON_NODE_HOLDS_VALUE(node) &&
+         json_node_get_value_type(node) == G_TYPE_BOOLEAN &&
+         json_node_get_boolean(node);
+}
+
+JsonObject *protocol_object(JsonObject *object, const char *member) {
+  JsonNode *node =
+      object != NULL ? json_object_get_member(object, member) : NULL;
+  return node != NULL && JSON_NODE_HOLDS_OBJECT(node)
+             ? json_node_get_object(node)
+             : NULL;
+}
+
+gboolean json_rpc_validate(JsonNode *node, GError **error) {
+  JsonObject *object = node != NULL && JSON_NODE_HOLDS_OBJECT(node)
+                           ? json_node_get_object(node)
+                           : NULL;
+  JsonNode *id = object != NULL ? json_object_get_member(object, "id") : NULL;
+  gboolean valid = object != NULL &&
+                   g_strcmp0(protocol_string(object, "jsonrpc"), "2.0") == 0;
+  if (id != NULL)
+    valid = valid && JSON_NODE_HOLDS_VALUE(id) &&
+            json_node_get_value_type(id) == G_TYPE_INT64 &&
+            json_node_get_int(id) >= 0 && json_node_get_int(id) <= G_MAXINT;
+  if (valid && json_object_has_member(object, "method")) {
+    valid = protocol_string(object, "method") != NULL &&
+            !json_object_has_member(object, "result") &&
+            !json_object_has_member(object, "error");
+    if (json_object_has_member(object, "params"))
+      valid = valid && protocol_object(object, "params") != NULL;
+  } else if (valid) {
+    valid = id != NULL && (json_object_has_member(object, "result") !=
+                           json_object_has_member(object, "error"));
+    if (json_object_has_member(object, "error")) {
+      JsonObject *e = protocol_object(object, "error");
+      JsonNode *code = e != NULL ? json_object_get_member(e, "code") : NULL;
+      valid = valid && protocol_string(e, "message") != NULL && code != NULL &&
+              JSON_NODE_HOLDS_VALUE(code) &&
+              json_node_get_value_type(code) == G_TYPE_INT64;
+    }
+  }
+  if (!valid)
+    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
+                        "Invalid JSON-RPC 2.0 envelope");
+  return valid;
+}
 
 /* ── I/O ───────────────────────────────────────────────── */
 
 JsonNode *json_rpc_read(FILE *stream, GError **error) {
-  char buf[MAX_LINE];
+  g_autoptr(GString) line = g_string_new(NULL);
   g_autoptr(JsonParser) parser = NULL;
   JsonNode *root;
   JsonObject *obj;
 
-  if (fgets(buf, (int)sizeof(buf), stream) == NULL) {
-    if (feof(stream))
+  for (;;) {
+    int ch = fgetc(stream);
+    if (ch == EOF) {
+      if (ferror(stream) || line->len > 0)
+        g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
+                            "Truncated IPC frame");
       return NULL;
-    g_set_error(error, G_IO_ERROR, g_io_error_from_errno(errno), "read: %s",
-                g_strerror(errno));
-    return NULL;
+    }
+    if (ch == '\n') {
+      if (line->len == 0)
+        continue;
+      break;
+    }
+    if (ch == 0 || line->len >= PROMPTR_MAX_FRAME) {
+      g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
+                          "IPC frame exceeds limit or contains NUL");
+      return NULL;
+    }
+    g_string_append_c(line, ch);
   }
-
-  /* Strip trailing newline */
-  {
-    size_t len = strlen(buf);
-    while (len > 0 && (buf[len - 1] == '\n' || buf[len - 1] == '\r'))
-      buf[--len] = '\0';
-  }
-
-  if (buf[0] == '\0')
-    return json_rpc_read(stream, error);
 
   parser = json_parser_new();
-  if (!json_parser_load_from_data(parser, buf, -1, error))
+  if (!json_parser_load_from_data(parser, line->str, line->len, error))
     return NULL;
 
   root = json_parser_get_root(parser);
-  if (root == NULL || JSON_NODE_HOLDS_VALUE(root)) {
+  if (!json_rpc_validate(root, error))
+    return NULL;
+  if (root == NULL || !JSON_NODE_HOLDS_OBJECT(root)) {
     g_set_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
                 "JSON message must be an object");
     return NULL;
@@ -67,7 +129,11 @@ gboolean json_rpc_write(FILE *stream, JsonNode *msg, GError **error) {
                 g_strerror(errno));
     return FALSE;
   }
-  fflush(stream);
+  if (fflush(stream) != 0) {
+    g_set_error(error, G_IO_ERROR, g_io_error_from_errno(errno), "flush: %s",
+                g_strerror(errno));
+    return FALSE;
+  }
   return TRUE;
 }
 
@@ -91,7 +157,7 @@ JsonNode *json_rpc_make_request(const char *method, JsonNode *params, int id) {
   json_builder_end_object(b);
 
   root = json_builder_get_root(b);
-  result = json_node_copy(root);
+  result = root;
   g_object_unref(b);
   return result;
 }
@@ -110,7 +176,7 @@ JsonNode *json_rpc_make_response(JsonNode *result, int id) {
   json_builder_end_object(b);
 
   root = json_builder_get_root(b);
-  res = json_node_copy(root);
+  res = root;
   g_object_unref(b);
   return res;
 }
@@ -134,7 +200,7 @@ JsonNode *json_rpc_make_error(int code, const char *message, int id) {
   json_builder_end_object(b);
 
   root = json_builder_get_root(b);
-  res = json_node_copy(root);
+  res = root;
   g_object_unref(b);
   return res;
 }
@@ -155,7 +221,7 @@ JsonNode *json_rpc_make_notification(const char *method, JsonNode *params) {
   json_builder_end_object(b);
 
   root = json_builder_get_root(b);
-  res = json_node_copy(root);
+  res = root;
   g_object_unref(b);
   return res;
 }
@@ -177,7 +243,7 @@ JsonNode *json_rpc_make_ok(int id) {
   json_builder_end_object(b);
 
   root = json_builder_get_root(b);
-  res = json_node_copy(root);
+  res = root;
   g_object_unref(b);
   return res;
 }
@@ -187,18 +253,18 @@ JsonNode *json_rpc_make_ok(int id) {
 const char *json_rpc_get_method(JsonNode *msg) {
   JsonObject *obj;
 
-  if (msg == NULL || JSON_NODE_HOLDS_VALUE(msg))
+  if (msg == NULL || !JSON_NODE_HOLDS_OBJECT(msg))
     return NULL;
   obj = json_node_get_object(msg);
   if (!json_object_has_member(obj, "method"))
     return NULL;
-  return json_object_get_string_member(obj, "method");
+  return protocol_string(obj, "method");
 }
 
 JsonNode *json_rpc_get_params(JsonNode *msg) {
   JsonObject *obj;
 
-  if (msg == NULL || JSON_NODE_HOLDS_VALUE(msg))
+  if (msg == NULL || !JSON_NODE_HOLDS_OBJECT(msg))
     return NULL;
   obj = json_node_get_object(msg);
   if (!json_object_has_member(obj, "params"))
@@ -209,7 +275,7 @@ JsonNode *json_rpc_get_params(JsonNode *msg) {
 int json_rpc_get_id(JsonNode *msg) {
   JsonObject *obj;
 
-  if (msg == NULL || JSON_NODE_HOLDS_VALUE(msg))
+  if (msg == NULL || !JSON_NODE_HOLDS_OBJECT(msg))
     return -1;
   obj = json_node_get_object(msg);
   if (!json_object_has_member(obj, "id"))
@@ -220,8 +286,11 @@ int json_rpc_get_id(JsonNode *msg) {
 
     if (id_node == NULL)
       return -1;
-    if (JSON_NODE_HOLDS_VALUE(id_node))
-      return json_node_get_int(id_node);
+    if (JSON_NODE_HOLDS_VALUE(id_node) &&
+        json_node_get_value_type(id_node) == G_TYPE_INT64 &&
+        json_node_get_int(id_node) >= 0 &&
+        json_node_get_int(id_node) <= G_MAXINT)
+      return (int)json_node_get_int(id_node);
     return -1;
   }
 }
@@ -229,7 +298,7 @@ int json_rpc_get_id(JsonNode *msg) {
 JsonNode *json_rpc_get_result(JsonNode *msg) {
   JsonObject *obj;
 
-  if (msg == NULL || JSON_NODE_HOLDS_VALUE(msg))
+  if (msg == NULL || !JSON_NODE_HOLDS_OBJECT(msg))
     return NULL;
   obj = json_node_get_object(msg);
   if (!json_object_has_member(obj, "result"))
@@ -241,14 +310,14 @@ int json_rpc_get_error_code(JsonNode *msg) {
   JsonObject *obj, *err_obj;
   JsonNode *err_node;
 
-  if (msg == NULL || JSON_NODE_HOLDS_VALUE(msg))
+  if (msg == NULL || !JSON_NODE_HOLDS_OBJECT(msg))
     return 0;
   obj = json_node_get_object(msg);
   if (!json_object_has_member(obj, "error"))
     return 0;
 
   err_node = json_object_get_member(obj, "error");
-  if (err_node == NULL || JSON_NODE_HOLDS_VALUE(err_node))
+  if (err_node == NULL || !JSON_NODE_HOLDS_OBJECT(err_node))
     return 0;
 
   err_obj = json_node_get_object(err_node);
@@ -262,21 +331,21 @@ const char *json_rpc_get_error_message(JsonNode *msg) {
   JsonObject *obj, *err_obj;
   JsonNode *err_node;
 
-  if (msg == NULL || JSON_NODE_HOLDS_VALUE(msg))
+  if (msg == NULL || !JSON_NODE_HOLDS_OBJECT(msg))
     return NULL;
   obj = json_node_get_object(msg);
   if (!json_object_has_member(obj, "error"))
     return NULL;
 
   err_node = json_object_get_member(obj, "error");
-  if (err_node == NULL || JSON_NODE_HOLDS_VALUE(err_node))
+  if (err_node == NULL || !JSON_NODE_HOLDS_OBJECT(err_node))
     return NULL;
 
   err_obj = json_node_get_object(err_node);
   if (!json_object_has_member(err_obj, "message"))
     return NULL;
 
-  return json_object_get_string_member(err_obj, "message");
+  return protocol_string(err_obj, "message");
 }
 
 gboolean json_rpc_is_request(JsonNode *msg) {
@@ -284,7 +353,7 @@ gboolean json_rpc_is_request(JsonNode *msg) {
 }
 
 gboolean json_rpc_is_response(JsonNode *msg) {
-  if (msg == NULL || JSON_NODE_HOLDS_VALUE(msg))
+  if (msg == NULL || !JSON_NODE_HOLDS_OBJECT(msg))
     return FALSE;
 
   {
@@ -302,5 +371,6 @@ gboolean json_rpc_is_notification(JsonNode *msg) {
 }
 
 gboolean json_rpc_is_error(JsonNode *msg) {
-  return json_rpc_get_error_code(msg) != 0;
+  return msg != NULL && JSON_NODE_HOLDS_OBJECT(msg) &&
+         protocol_object(json_node_get_object(msg), "error") != NULL;
 }

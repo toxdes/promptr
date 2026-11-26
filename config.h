@@ -57,38 +57,36 @@
 /* Layer-shell overlay on wlroots compositors (0 or 1) */
 #define LAYER_SHELL_ENABLED              0
 
-/* Comma-separated options for Agent/Model pickers (first=default) */
-#define DEFAULT_AGENT_OPTIONS            "linux_cmd,None"
-#define DEFAULT_MODEL_OPTIONS                                                  \
-  "opencode-go/deepseek-v4-flash,"                                             \
-  "opencode-go/deepseek-v4-pro,"                                               \
-  "opencode/big-pickle,"                                                       \
-  "opencode/deepseek-v4-flash-free,None"
+/* Legacy agent options (selection now uses Markdown files) */
+#define DEFAULT_AGENT_OPTIONS            "None"
+/* Legacy model options (selection now uses provider profiles) */
+#define DEFAULT_MODEL_OPTIONS            "None"
 
-/* Path to the opencode binary */
-#define OPENCODE_PATH            "opencode"
-
-/* Backend provider ("opencode" or "openrouter") */
-#define PROVIDER_DEFAULT         "opencode"
+/* Default provider profile UUID or plugin name */
+#define PROVIDER_DEFAULT                 "openrouter"
 
 /* Default marked lines (0=all, -1=none, or comma-separated 1-based) */
-#define DEFAULT_MARKED_LINES_STR "1"
+#define DEFAULT_MARKED_LINES_STR         "1"
 
 /* Desktop notification on copy (0 or 1) */
-#define NOTIFY_ON_COPY           1
+#define NOTIFY_ON_COPY                   1
 
 /* Window decorations when layer-shell is disabled (0 or 1) */
-#define DECORATED_DEFAULT        1
+#define DECORATED_DEFAULT                1
 
-/* Font sizes in pt for prompt and output textviews (0 = system default) */
-#define PROMPT_FONT_SIZE_DEFAULT 0
-#define OUTPUT_FONT_SIZE_DEFAULT 0
+/* Font for query editor (Pango description; omit size for system default) */
+#define QUERY_FONT_DEFAULT               "Monospace"
+/* Font for answer editor (Pango description; omit size for system default) */
+#define ANSWER_FONT_DEFAULT              "Monospace"
+
+/* Show line numbers in prompt and output editors (0 or 1) */
+#define EDITOR_LINE_NUMBERS_DEFAULT      1
 
 /* Command section expanded by default (0 or 1) */
-#define COMMAND_EXPANDED_DEFAULT 0
+#define COMMAND_EXPANDED_DEFAULT         0
 
 /* Hex color for marked-line gutter indicator */
-#define MARK_BG_COLOR            "#33cc7f"
+#define MARK_BG_COLOR                    "#33cc7f"
 
 /*
  * GSK renderer backend (set before gtk_init, not switchable at runtime):
@@ -97,7 +95,7 @@
  *   gl     — OpenGL (GPU), deprecated in 4.14, aliases to ngl
  *   vulkan — Vulkan (GPU), similar memory to GL; requires Vulkan driver
  */
-#define GSK_RENDERER_DEFAULT     "cairo"
+#define GSK_RENDERER_DEFAULT             "cairo"
 
 #ifndef VERSION
 #define VERSION "unknown"
